@@ -10,16 +10,40 @@
 """
 from __future__ import annotations
 import json
+import random
+import re
 from pathlib import Path
+
+# 성취기준 코드에서 영역 번호 추출
+# 초·중: [2수01-01] [4수02-01] [9수03-01] -> 01,02,03,04
+# 고등: [10공수1-01-01] -> 01 (과목 안에서의 영역)
+_DOMAIN_RX = re.compile(r'\[(?:\d+수|1\d[가-힣A-Z]+\d*-)(\d{2})')
+
+
+def _domain_of(code: str) -> str:
+    m = _DOMAIN_RX.match(code)
+    return m.group(1) if m else "00"
 
 CURRICULUM_PATH = (
     Path(__file__).resolve().parent
     / "curriculum" / "achievement_standards_2022.json"
 )
+FEWSHOT_PATH = (
+    Path(__file__).resolve().parent
+    / "curriculum" / "fewshot.json"
+)
 
 
 def load_curriculum() -> dict:
     with open(CURRICULUM_PATH, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def load_fewshot() -> dict:
+    """{persona_id: {question, solution}} 형식. 파일 없으면 빈 dict 반환."""
+    if not FEWSHOT_PATH.exists():
+        return {}
+    with open(FEWSHOT_PATH, encoding="utf-8") as f:
         return json.load(f)
 
 
@@ -113,27 +137,48 @@ TONE = {
 }
 
 
-def sample_standards(curriculum, age_files, level_tag, k=8):
-    """해당 연령·난이도 단계의 성취기준 진술 k개 추출."""
-    out = []
+def sample_standards(curriculum, age_files, level_tag, k=8, seed=42):
+    """해당 연령·난이도 단계의 성취기준 진술 k개를 영역 균형으로 추출.
+
+    영역(수와 연산 / 변화와 관계 / 도형과 측정 / 자료와 가능성 등)을 기준으로
+    그룹화한 뒤 라운드 로빈으로 한 개씩 뽑아 한 영역에만 편향되지 않게 한다.
+    seed로 재현성 보장.
+    """
+    pool = []
     for fk in age_files:
         for it in curriculum.get(fk, []):
             stmt = it.get(level_tag, "").strip()
             if stmt:
-                out.append((it["code"], stmt))
-                if len(out) >= k:
-                    return out
+                pool.append((it["code"], stmt))
+    # 영역별 그룹화
+    by_domain: dict[str, list] = {}
+    for code, stmt in pool:
+        by_domain.setdefault(_domain_of(code), []).append((code, stmt))
+    rng = random.Random(seed)
+    for d in by_domain:
+        rng.shuffle(by_domain[d])
+    # 영역 순서도 셔플 (시드 고정)
+    domains = sorted(by_domain.keys())
+    rng.shuffle(domains)
+    out: list[tuple[str, str]] = []
+    while len(out) < k and any(by_domain[d] for d in domains):
+        for d in domains:
+            if by_domain[d] and len(out) < k:
+                out.append(by_domain[d].pop())
     return out
 
 
-def build_persona(age: str, level: str, curriculum=None) -> dict:
+def build_persona(age: str, level: str, curriculum=None, fewshot=None) -> dict:
     if curriculum is None:
         curriculum = load_curriculum()
+    if fewshot is None:
+        fewshot = load_fewshot()
     a, l = AGE[age], LEVEL[level]
     tag = l.get("level_tag") or l["level_tag_by_age"][age]
+    pid = f"{age}-{level}"
     return {
-        "id": f"{age}-{level}",
-        "tag": f"<{age}-{level}>",
+        "id": pid,
+        "tag": f"<{pid}>",
         "age": age,
         "level": level,
         "level_tag": tag,
@@ -144,6 +189,7 @@ def build_persona(age: str, level: str, curriculum=None) -> dict:
         "scaffolding": l["scaffolding"],
         "tone": TONE[(age, level)],
         "exemplar_standards": sample_standards(curriculum, a["files"], tag, k=8),
+        "fewshot": fewshot.get(pid),  # None이면 system prompt에 few-shot 블록 미포함
     }
 
 
@@ -156,7 +202,8 @@ PERSONA_GRID = [
 
 def all_personas() -> list[dict]:
     cur = load_curriculum()
-    return [build_persona(a, l, cur) for a, l in PERSONA_GRID]
+    fs = load_fewshot()
+    return [build_persona(a, l, cur, fs) for a, l in PERSONA_GRID]
 
 
 # GPT-4o용 system prompt 템플릿 ------------------------------------
@@ -183,12 +230,24 @@ SYSTEM_PROMPT_TEMPLATE = """당신은 한국의 {age} 학생({level}) 한 명을
 
 [참고: 이 학생의 도달 수준을 보여주는 2022 개정 교육과정 성취기준 진술 예시]
 {exemplars}
-
+{fewshot_block}
 [출력 형식 - 반드시 지킬 것]
 - 풀이는 'Step 1: ', 'Step 2: ', ... 형식으로 단계를 명시한다.
 - 한 스텝은 한 문장 또는 두세 문장 이내로 끝낸다.
 - 최종 정답은 마지막에 \\boxed{{...}} 형태로 한 번만 제시한다.
 - 위 페르소나의 톤과 학습 범위에서 절대 벗어나지 않는다."""
+
+
+def _render_fewshot_block(persona: dict) -> str:
+    """fewshot이 있으면 system prompt에 끼울 예시 블록을 만들고, 없으면 빈 문자열."""
+    fs = persona.get("fewshot")
+    if not fs:
+        return ""
+    return (
+        "\n[예시 풀이 - 이 톤과 형식을 그대로 따라하세요]\n"
+        f"문제: {fs['question']}\n"
+        f"풀이:\n{fs['solution']}\n"
+    )
 
 
 def render_system_prompt(persona: dict) -> str:
@@ -206,6 +265,7 @@ def render_system_prompt(persona: dict) -> str:
         scaffolding=persona["scaffolding"],
         tone=persona["tone"],
         exemplars=exemplars,
+        fewshot_block=_render_fewshot_block(persona),
     )
 
 
