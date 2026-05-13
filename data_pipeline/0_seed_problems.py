@@ -33,32 +33,35 @@ OPS_RE = re.compile(r"<<[^>]+>>")
 ANS_RE = re.compile(r"####\s*(.+)$", re.MULTILINE)
 
 
+# 너무 복잡한 문제는 제외하고 실험하기 위해 hard만 분류
 def difficulty_bucket(item: dict) -> str:
     n_ops = len(OPS_RE.findall(item["answer"]))
     q_words = len(item["question"].split())
+    
     if n_ops <= 2 and q_words <= 30:
         return "easy"
     if n_ops <= 4 and q_words <= 60:
-        return "medium"
-    return "hard"
+        return "medium"    
+    else:
+        return "hard"
 
-
+# GSM8K에서 정답만 추출할 수 있는 함수(#### 뒤의 텍스트를 답으로 출력)
 def extract_gt_answer(answer_field: str) -> str:
     m = ANS_RE.search(answer_field)
     return m.group(1).strip() if m else ""
 
-
+# HuggingFace datasets로 GSM8K train 로드. 캐시 사용.
 def load_gsm8k_train():
-    """HuggingFace datasets로 GSM8K train 로드. 캐시 사용."""
     from datasets import load_dataset
     return load_dataset("gsm8k", "main", split="train")
 
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--n-problems", type=int, default=1500,
+    '''문제 개수, 시드값, 출력 경로 입력받을 수 있음 '''
+    ap.add_argument("--n-problems", type=int, default=1500, # 기본 1500개 추출
                     help="공통 풀에서 뽑을 문제 개수 (각 문제는 6종 페르소나 모두에 배정)")
-    ap.add_argument("--seed", type=int, default=42)
+    ap.add_argument("--seed", type=int, default=42) # 시드번호 디폴트 42
     ap.add_argument("--out", type=str,
                     default=str(REPO_ROOT / "data_pipeline" / "output" / "seed_problems.jsonl"))
     args = ap.parse_args()
@@ -85,8 +88,10 @@ def main():
         })
     for b, lst in buckets.items():
         print(f"[bucket] {b}: {len(lst)}개")
+    
 
-    # 공통 풀 구성 (easy + medium)
+    # 공통 풀 구성 (easy + medium) = 1500개
+    # 걍 따로 두는건 어떨까욤.. reasoning 난이도에 따라 얼마나 다르게 하는지 확인하기 위해?
     common_pool = []
     for b in COMMON_BUCKETS:
         common_pool.extend(buckets[b])
@@ -98,7 +103,7 @@ def main():
         print(f"[warn] 요청 {args.n_problems}개 대비 풀 크기 {len(picked)}개. 가능한 만큼만 사용.")
     print(f"[pick] {len(picked)}개 문제 선정")
 
-    # 같은 문제를 6종 페르소나 모두에 복제 배정
+    # 같은 문제를 6종 페르소나 모두에 복제 배정 = 9000개
     n_total = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for item in picked:
