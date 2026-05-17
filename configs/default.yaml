@@ -1,0 +1,46 @@
+# BC-StepDPO 학습 설정
+# Qwen3-4B + LoRA 기준. 1.7B로 ablation 시 batch_size 키울 것.
+
+# -------- SFT (Stage 2) --------
+sft:
+  use_lora: true
+  lora_r: 16
+  lora_alpha: 32
+  lora_targets: ["q_proj", "v_proj", "o_proj", "k_proj"]
+  epochs: 2
+  batch_size: 4
+  grad_accum: 4
+  max_len: 1024
+  lr: 2.0e-5
+  warmup_steps: 100
+
+# -------- BC-StepDPO (Stage 4) --------
+use_lora: true
+lora_r: 32
+lora_alpha: 64
+lora_targets: ["q_proj", "v_proj", "o_proj", "k_proj"]
+
+epochs: 2
+batch_size: 4
+grad_accum: 8
+max_len: 1024
+lr: 5.0e-6
+weight_decay: 0.01
+warmup_steps: 100
+max_grad_norm: 1.0
+
+# BC-StepDPO 핵심 하이퍼파라미터
+beta: 0.1                  # KL 정규화 강도 (상수)
+
+# -------- Ablation toggle --------
+# 아래 toggle로 ablation grid 12개 run 모두 커버:
+#
+#   1) Baseline SFT: 이 스크립트 실행 안 함 (SFT 모델 그대로 평가)
+#   2) Vanilla DPO:          disable_step_mask: true,  disable_belief_token: false, disable_type2: true
+#   3) Step-DPO (math only): disable_step_mask: false, disable_belief_token: true,  disable_type2: true
+#   4) Conditional DPO:      disable_step_mask: true,  disable_belief_token: false, disable_type2: true
+#   5) BC-StepDPO (T1 only): disable_step_mask: false, disable_belief_token: false, disable_type2: true
+#   6) BC-StepDPO (full):    disable_step_mask: false, disable_belief_token: false, disable_type2: false  ← default
+disable_step_mask: false      # true → vanilla DPO 형태
+disable_belief_token: false   # true → persona 토큰 제거
+disable_type2: false          # true → Type-2 belief-flip pair 제외

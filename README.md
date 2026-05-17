@@ -1,20 +1,45 @@
 # Persona-Step-DPO
 
-2022 개정 교육과정 기반 다차원 페르소나 수학 튜터 sLLM 학습 파이프라인.
-GDPO와 Step-DPO를 결합한 이중 제어 아키텍처로 Qwen3-0.6B를 미세조정한다.
+BC-StepDPO (Belief-Conditional Step-DPO) 방법론의 공개 구현 레포.
+2022 개정 교육과정에 기반한 6종 페르소나로 Qwen3 계열 모델을 미세조정하여
+"학년·난이도에 맞는 화법으로 단계별 풀이를 제공하는" 수학 튜터 sLLM을 학습한다.
 
 Repo: https://github.com/daehoidar/Persona-Step-DPO
 
-## 개요
+## 핵심 아이디어
 
-기존 교육용 LLM의 두 가지 한계, 학습자 수준에 무관한 획일적 해설과 다단계
-추론에서의 논리 오류를, 동시에 해결하는 것을 목표로 한다.
+1. Step-DPO의 손실에 belief(페르소나) 조건 변수 b를 추가하여 단일 손실로 통합
+   (Proposition 2).
+2. 차별점은 손실 함수가 아닌 데이터 구조에 있다. 같은 step 텍스트가 페르소나에
+   따라 win/lose가 뒤집힐 수 있는 Type-2 belief-flip pair를 명시적으로 학습.
+3. 데이터셋의 label flip rate가 belief-dependent reward 가정(A7)의 경험적
+   정당화이다 (Proposition 3).
 
-- 페르소나 6종: 연령 3종(초등, 중등, 고등) x 난이도 2종(상위권, 하위권)
-- GDPO: 페르소나 조건부 화법 분포 정렬
-- Step-DPO: 추론 스텝 단위 정합성 정렬
-- 베이스 모델: Qwen3-0.6B
-- 학습 데이터: GSM8K 기반 페르소나 합성 데이터
+## 손실 함수
+
+L = -E[log sigma(beta * Delta_theta(x, b, s_{1:k-1}, s_w, s_l))]
+
+Delta_theta = [log pi_theta(s_w | x, b, prefix) - log pi_ref(s_w | x, b, prefix)]
+            - [log pi_theta(s_l | x, b, prefix) - log pi_ref(s_l | x, b, prefix)]
+
+- x: 문제, b: 페르소나 토큰, prefix: s_{1:k-1}
+- s_w, s_l: 같은 prefix 위의 win/lose step
+- beta: KL 정규화 상수 (학습 가능 아님)
+
+상세 derivation은 별도 문서 참조.
+
+## 페르소나 6종
+
+연령 3 (초등, 중등, 고등) x 난이도 2 (상위권, 하위권). 각 페르소나는
+`personas.json`에 다음 필드로 정의된다.
+
+- 메타: id, tag, grade_band, level
+- 화법: vocabulary_guide, explanation_style, example_phrasing
+- 어휘: forbidden_terms, preferred_terms
+- 교육과정 근거: exemplar_standards, term_evidence (derive 스크립트가 자동 주입)
+
+페르소나의 forbidden/preferred 어휘는 2022 개정 수학과 교육과정의 학년별 도입
+시점과 대조하여 정합성을 검증한다 (`derive_persona_evidence.py`).
 
 ## 디렉토리 구조
 
@@ -22,25 +47,24 @@ Repo: https://github.com/daehoidar/Persona-Step-DPO
 Persona-Step-DPO/
   README.md
   requirements.txt
-  personas.py                         페르소나 6종 정의 + system prompt 빌더
+  personas.json                          페르소나 6종 정의 (enriched)
+  judge_prompts.py                       GPT-4o용 prompt 3종 + 포매팅 헬퍼
+  bc_stepdpo_loss.py                     BC-StepDPO 손실 함수
+  derive_persona_evidence.py             personas.json + 교육과정 cross-reference
+  utils.py                               공용 헬퍼 (load_personas / parse_steps)
+  configs/
+    default.yaml                         SFT + BC-StepDPO 학습 설정
   curriculum/
-    achievement_standards_2022.json   2022 개정 수학과 성취기준 구조화 자료
+    achievement_standards_2022.json      2022 개정 수학과 성취기준 254개
   data_pipeline/
-    0_seed_problems.py                GSM8K 샘플링 + 난이도 버킷 배정
-    1_synthesize_sft.py               GPT-4o로 페르소나별 정답 해설 합성
-    2_run_sft.sh                      Qwen3-0.6B SFT 실행 스크립트
-    3_collect_errors.sh               참조 모델로 오답 수집
-    4_locate_error.py                 GPT-4o로 첫 오류 스텝 식별
-    5_prepare_correction.py           오류 직전 prefix 추출
-    6_rectify.sh                      참조 모델로 정답 재샘플링
-    7_build_step_pairs.py             step_pair (단계 쌍) 생성
-    8_build_belief_pairs.py           belief_pair (페르소나 쌍) 생성
-    9_merge.py                        step_pair + belief_pair 병합
-  configs/                            학습용 yaml 설정
-  evaluation/                         정답 매칭 유틸 (Step-DPO에서 차용)
-  train.py                            GDPO + Step-DPO 통합 Trainer
-  eval_math_persona.py                페르소나 입력을 지원하는 평가 스크립트
-  app.py                              데모 인터페이스
+    0_seed_problems.py                   GSM8K 난이도 버킷팅 (easy + medium)
+    1_synthesize_sft.py                  GPT-4o로 페르소나별 풀이 합성
+    2_train_sft.py                       SFT (reference 모델 학습)
+    3_build_pairs.py                     Type-1 + Type-2 preference pair 구축
+    3_5_analyze_flip_rate.py             label flip rate 통계 (Proposition 3)
+    4_train_bc_stepdpo.py                BC-StepDPO 학습
+    5_evaluate.py                        평가 (final acc + step judge + flip handling)
+    run_full_pipeline.sh                 Stage 0~5 일괄 실행 스크립트
 ```
 
 ## 의존성
@@ -51,47 +75,41 @@ pip install -r requirements.txt
 
 ## 실행 순서
 
-1. SFT 시드 데이터 생성
+```bash
+# 0) 페르소나 evidence 자동 주입 (최초 1회 또는 personas.json 수정 시)
+python derive_persona_evidence.py
 
-   ```
-   python data_pipeline/0_seed_problems.py --per-persona 1500 --seed 42
-   export OPENAI_API_KEY=sk-...
-   python data_pipeline/1_synthesize_sft.py --concurrency 8 --max-cost 80
-   ```
+# 1) 전체 파이프라인 일괄 실행
+export OPENAI_API_KEY=sk-...
+export BASE_MODEL=Qwen/Qwen3-1.7B-Instruct
+export N_PROBLEMS=1500
+export SOLS_PER_ROW=5
+export K_SAMPLES=8
+bash data_pipeline/run_full_pipeline.sh
+```
 
-2. 참조 모델 SFT
+단계별 수동 실행은 `run_full_pipeline.sh` 안의 명령을 참고한다.
 
-   ```
-   bash data_pipeline/2_run_sft.sh
-   ```
+## Ablation Grid (configs/default.yaml의 toggle로 제어)
 
-3. 페르소나 조건부 오답 수집과 첫 오류 스텝 식별
+| Config | step_mask | belief_token | type2 |
+|---|---|---|---|
+| Vanilla DPO | OFF | ON | OFF |
+| Step-DPO (math only) | ON | OFF | OFF |
+| Conditional DPO | OFF | ON | OFF |
+| BC-StepDPO (Type-1 only) | ON | ON | OFF |
+| BC-StepDPO (full) | ON | ON | ON |
 
-   ```
-   bash data_pipeline/3_collect_errors.sh
-   python data_pipeline/4_locate_error.py
-   ```
+핵심 비교는 마지막 두 줄 — Type-2 belief-flip pair가 trivial conditioning을
+넘어선 신호를 만드는지 검증한다.
 
-4. 정답 재샘플링과 step_pair 빌드
+## 평가 지표
 
-   ```
-   python data_pipeline/5_prepare_correction.py
-   bash data_pipeline/6_rectify.sh
-   python data_pipeline/7_build_step_pairs.py
-   ```
-
-5. belief_pair 빌드와 최종 병합
-
-   ```
-   python data_pipeline/8_build_belief_pairs.py
-   python data_pipeline/9_merge.py
-   ```
-
-6. GDPO + Step-DPO 학습
-
-   ```
-   accelerate launch train.py configs/persona_step_dpo.yaml
-   ```
+- GSM8K-ko final answer accuracy (exact match)
+- Step-level math accuracy (GPT-4o judge)
+- Persona consistency (GPT-4o judge)
+- Label flip rate (Proposition 3 핵심 통계)
+- Belief-flip handling (flip 케이스에서의 정답률)
 
 ## 데이터 출처
 

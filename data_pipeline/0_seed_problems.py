@@ -24,7 +24,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from personas import PERSONA_GRID  # noqa: E402
+from utils import load_personas  # noqa: E402
 
 # 6종 페르소나가 공통으로 사용하는 난이도 풀. hard는 제외.
 COMMON_BUCKETS = ["easy", "medium"]
@@ -102,12 +102,16 @@ def main():
         print(f"[warn] 요청 {args.n_problems}개 대비 풀 크기 {len(picked)}개. 가능한 만큼만 사용.")
     print(f"[pick] {len(picked)}개 문제 선정")
 
-    # 같은 문제를 6종 페르소나 모두에 복제 배정 = 9000개
+    # personas.json에서 페르소나 id 목록 로드 (elem_low, elem_high, ...)
+    personas = load_personas(REPO_ROOT / "personas.json")
+    persona_ids = [p["id"] for p in personas]
+    print(f"[personas] {len(persona_ids)}종: {persona_ids}")
+
+    # 같은 문제를 6종 페르소나 모두에 복제 배정
     n_total = 0
     with open(out_path, "w", encoding="utf-8") as f:
         for item in picked:
-            for age, level in PERSONA_GRID:
-                pid = f"{age}-{level}"
+            for pid in persona_ids:
                 row = {
                     "problem_id": item["problem_id"],
                     "persona": pid,
@@ -118,7 +122,7 @@ def main():
                 }
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")
                 n_total += 1
-    print(f"\n[done] 문제 {len(picked)}개 x 페르소나 {len(PERSONA_GRID)}종 = {n_total}행")
+    print(f"\n[done] 문제 {len(picked)}개 x 페르소나 {len(persona_ids)}종 = {n_total}행")
     print(f"[done] -> {out_path}")
 
 

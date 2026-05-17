@@ -1,195 +1,147 @@
-"""GPT-4o로 페르소나별 정답 해설을 합성하여 SFT 시드를 만든다.
+"""data_pipeline/1_synthesize_sft.py
 
-입력: data_pipeline/output/seed_problems.jsonl  (0_seed_problems.py 산출물)
-출력: data_pipeline/output/sft_data.jsonl
+Stage 1: GPT-4o로 페르소나별 정답 풀이 합성 → SFT 데이터.
 
-특징:
-- AsyncOpenAI + 세마포어로 동시 호출 제한
-- 호출 단위 지수 백오프 재시도 (RateLimit, Timeout, ServerError)
-- 출력 jsonl을 append 모드로 즉시 기록 -> 중단 시 재개 가능
-- (problem_id, persona) 키 기준으로 처리 완료 항목 자동 스킵
-- 비용 가드: --max-cost USD 초과 시 신규 호출 중단
+0_seed_problems.py가 만든 seed_problems.jsonl(각 행 = problem+persona 쌍)을
+입력으로 받고, 각 행마다 --solutions-per-row 개의 풀이를 합성한다.
 
-환경변수:
-    OPENAI_API_KEY  (필수)
-    OPENAI_BASE_URL (선택; 프록시 사용 시)
+Output format (JSONL):
+    {
+      "problem_id": "gsm8k_train_42",
+      "problem": "...",
+      "ground_truth": "5/6",
+      "persona_id": "elem_low",
+      "persona_tag": "<초등-하위권>",
+      "solution_text": "Step 1: ...\\nStep 2: ...",
+      "steps": ["Step 1: ...", "Step 2: ..."],
+      "difficulty": "easy"
+    }
 
-사용 예:
-    export OPENAI_API_KEY=sk-...
-    python data_pipeline/1_synthesize_sft.py --concurrency 8 --max-cost 80
+Usage:
+    python data_pipeline/1_synthesize_sft.py \\
+        --seed-problems data_pipeline/output/seed_problems.jsonl \\
+        --solutions-per-row 5 \\
+        --output data_pipeline/output/sft_data.jsonl
 """
 from __future__ import annotations
 import argparse
-import asyncio
 import json
-import os
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
-from personas import all_personas, render_system_prompt  # noqa: E402
-
-# 가격은 변동 가능. 사용 전 https://openai.com/api/pricing 확인.
-PRICE_INPUT_PER_1M = 2.50   # USD per 1M input tokens (gpt-4o, 2024-09 기준)
-PRICE_OUTPUT_PER_1M = 10.00
-
-MODEL = "gpt-4o"
-MAX_OUTPUT_TOKENS = 1024
-TEMPERATURE = 0.3
+from openai import OpenAI  # noqa: E402
+from judge_prompts import (  # noqa: E402
+    GENERATOR_SYSTEM, GENERATOR_USER_TEMPLATE, build_generator_kwargs,
+)
+from utils import load_personas, parse_steps  # noqa: E402
 
 
-def build_prompt_table():
-    """페르소나 id -> system prompt 매핑."""
-    return {p["id"]: render_system_prompt(p) for p in all_personas()}
-
-
-def make_key(row: dict) -> str:
-    return f"{row['problem_id']}::{row['persona']}"
-
-
-def load_processed_keys(path: Path) -> set:
-    if not path.exists():
-        return set()
-    keys = set()
+def load_seed_rows(path: Path) -> list[dict]:
+    rows = []
     with open(path, encoding="utf-8") as f:
         for line in f:
-            try:
-                row = json.loads(line)
-                keys.add(make_key(row))
-            except Exception:
-                continue
-    return keys
+            rows.append(json.loads(line))
+    return rows
 
 
-def estimate_cost(prompt_tokens: int, completion_tokens: int) -> float:
-    return (prompt_tokens * PRICE_INPUT_PER_1M / 1e6
-            + completion_tokens * PRICE_OUTPUT_PER_1M / 1e6)
+def generate_one_solution(
+    client: OpenAI, seed_row: dict, persona: dict,
+    model: str = "gpt-4o", max_retries: int = 3,
+) -> dict | None:
+    sys_prompt = GENERATOR_SYSTEM.format(**build_generator_kwargs(persona))
+    user_prompt = GENERATOR_USER_TEMPLATE.format(problem=seed_row["question"])
 
-
-async def call_one(client, sem, system_prompt, user_msg, retries=4):
-    delay = 2.0
-    for attempt in range(retries):
-        async with sem:
-            try:
-                resp = await client.chat.completions.create(
-                    model=MODEL,
-                    messages=[
-                        {"role": "system", "content": system_prompt},
-                        {"role": "user", "content": user_msg},
-                    ],
-                    temperature=TEMPERATURE,
-                    max_tokens=MAX_OUTPUT_TOKENS,
-                )
-                return resp
-            except Exception as e:
-                if attempt + 1 == retries:
-                    raise
-                await asyncio.sleep(delay)
-                delay *= 2
-    raise RuntimeError("unreachable")
-
-
-async def main_async(args):
-    from openai import AsyncOpenAI
-
-    in_path = Path(args.input)
-    out_path = Path(args.output)
-    out_path.parent.mkdir(parents=True, exist_ok=True)
-
-    if not in_path.exists():
-        sys.exit(f"[error] input not found: {in_path}")
-
-    seed_rows = []
-    with open(in_path, encoding="utf-8") as f:
-        for line in f:
-            seed_rows.append(json.loads(line))
-    print(f"[load] {len(seed_rows)} seed rows from {in_path}")
-
-    processed = load_processed_keys(out_path)
-    todo = [r for r in seed_rows if make_key(r) not in processed]
-    print(f"[resume] already done: {len(processed)},  todo: {len(todo)}")
-    if args.limit:
-        todo = todo[: args.limit]
-        print(f"[limit] truncate todo to {len(todo)}")
-
-    system_prompts = build_prompt_table()
-    client = AsyncOpenAI(
-        api_key=os.environ["OPENAI_API_KEY"],
-        base_url=os.environ.get("OPENAI_BASE_URL") or None,
-    )
-    sem = asyncio.Semaphore(args.concurrency)
-
-    state = {"cost": 0.0, "done": 0, "fail": 0, "stopped": False}
-    out_f = open(out_path, "a", encoding="utf-8")
-    out_lock = asyncio.Lock()
-
-    t0 = time.time()
-
-    async def run_one(row):
-        if state["stopped"]:
-            return
-        if state["cost"] >= args.max_cost:
-            state["stopped"] = True
-            return
-        sys_p = system_prompts[row["persona"]]
-        user_msg = f"{row['persona']}\n{row['question']}\n\n위 문제를 단계별로 풀어주세요."
-        # 페르소나 태그를 user 메시지 헤더에 포함 (학습/추론 시점 입력 형태와 일치)
-        user_msg = f"<{row['persona']}>\n{row['question']}\n\n위 문제를 단계별로 풀어주세요."
+    for attempt in range(max_retries):
         try:
-            resp = await call_one(client, sem, sys_p, user_msg)
+            resp = client.chat.completions.create(
+                model=model,
+                messages=[
+                    {"role": "system", "content": sys_prompt},
+                    {"role": "user", "content": user_prompt},
+                ],
+                temperature=0.8,
+                max_tokens=800,
+            )
+            solution_text = resp.choices[0].message.content
+            steps = parse_steps(solution_text)
+            if len(steps) < 2:
+                continue
+            return {
+                "problem_id": seed_row["problem_id"],
+                "problem": seed_row["question"],
+                "ground_truth": seed_row.get("gt_answer", ""),
+                "persona_id": persona["id"],
+                "persona_tag": persona["tag"],
+                "solution_text": solution_text,
+                "steps": steps,
+                "difficulty": seed_row.get("difficulty"),
+            }
         except Exception as e:
-            state["fail"] += 1
-            print(f"[fail] {make_key(row)}: {type(e).__name__}: {e}")
-            return
-        usage = resp.usage
-        cost = estimate_cost(usage.prompt_tokens, usage.completion_tokens)
-        state["cost"] += cost
-        state["done"] += 1
-        record = {
-            **row,
-            "gpt4o_solution": resp.choices[0].message.content,
-            "model": MODEL,
-            "prompt_tokens": usage.prompt_tokens,
-            "completion_tokens": usage.completion_tokens,
-            "cost_usd": round(cost, 6),
-        }
-        async with out_lock:
-            out_f.write(json.dumps(record, ensure_ascii=False) + "\n")
-            out_f.flush()
-        if state["done"] % 20 == 0:
-            elapsed = time.time() - t0
-            rate = state["done"] / max(elapsed, 1e-3)
-            print(f"[progress] done={state['done']} fail={state['fail']} "
-                  f"cost=${state['cost']:.2f} rate={rate:.2f}/s")
-
-    await asyncio.gather(*(run_one(r) for r in todo))
-    out_f.close()
-
-    elapsed = time.time() - t0
-    print(f"\n[summary] done={state['done']} fail={state['fail']} "
-          f"cost=${state['cost']:.2f} elapsed={elapsed:.0f}s")
-    if state["stopped"]:
-        print(f"[note] stopped early due to --max-cost ({args.max_cost})")
+            print(f"[retry {attempt+1}] {e}")
+            time.sleep(2 ** attempt)
+    return None
 
 
 def main():
-    ap = argparse.ArgumentParser()
-    ap.add_argument("--input", default=str(REPO_ROOT / "data_pipeline" / "output" / "seed_problems.jsonl"))
-    ap.add_argument("--output", default=str(REPO_ROOT / "data_pipeline" / "output" / "sft_data.jsonl"))
-    ap.add_argument("--concurrency", type=int, default=8)
-    ap.add_argument("--max-cost", type=float, default=80.0,
-                    help="누적 비용(USD) 상한. 초과 시 신규 호출 중단.")
-    ap.add_argument("--limit", type=int, default=0,
-                    help="0이면 전체. 디버그용 호출 개수 제한.")
-    args = ap.parse_args()
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--seed-problems",
+        default=str(REPO_ROOT / "data_pipeline" / "output" / "seed_problems.jsonl"),
+        help="0_seed_problems.py 산출물 jsonl",
+    )
+    parser.add_argument("--solutions-per-row", type=int, default=5,
+                        help="(문제, 페르소나) 한 쌍당 합성할 풀이 개수")
+    parser.add_argument("--personas-path", default=str(REPO_ROOT / "personas.json"))
+    parser.add_argument(
+        "--output",
+        default=str(REPO_ROOT / "data_pipeline" / "output" / "sft_data.jsonl"),
+    )
+    parser.add_argument("--model", default="gpt-4o")
+    parser.add_argument("--workers", type=int, default=8)
+    parser.add_argument("--limit", type=int, default=0,
+                        help="0이면 전체. 디버그/부트스트랩용 호출 수 제한.")
+    args = parser.parse_args()
 
-    if "OPENAI_API_KEY" not in os.environ:
-        sys.exit("[error] OPENAI_API_KEY 환경변수를 먼저 설정하세요.")
+    client = OpenAI()
+    personas = {p["id"]: p for p in load_personas(args.personas_path)}
+    seed_rows = load_seed_rows(Path(args.seed_problems))
+    print(f"[load] {len(seed_rows)} seed rows, {len(personas)} personas")
 
-    asyncio.run(main_async(args))
+    # (seed_row, persona) x solutions_per_row 작업 큐
+    tasks = []
+    for row in seed_rows:
+        pers = personas.get(row["persona"])
+        if pers is None:
+            continue
+        for _ in range(args.solutions_per_row):
+            tasks.append((row, pers))
+    if args.limit:
+        tasks = tasks[: args.limit]
+    print(f"[tasks] {len(tasks)}  (~ ${len(tasks) * 0.002:.2f} estimated cost)")
+
+    out_path = Path(args.output)
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+    n_success = 0
+    with open(out_path, "w", encoding="utf-8") as fout, \
+         ThreadPoolExecutor(max_workers=args.workers) as ex:
+        futures = [
+            ex.submit(generate_one_solution, client, row, pers, args.model)
+            for row, pers in tasks
+        ]
+        for i, fut in enumerate(as_completed(futures)):
+            result = fut.result()
+            if result is not None:
+                fout.write(json.dumps(result, ensure_ascii=False) + "\n")
+                n_success += 1
+            if (i + 1) % 100 == 0:
+                print(f"[{i+1}/{len(tasks)}] success: {n_success}")
+
+    print(f"Done. {n_success}/{len(tasks)} -> {out_path}")
 
 
 if __name__ == "__main__":
