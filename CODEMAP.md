@@ -110,74 +110,61 @@ GPT-4o judge용 system prompt 3종과 헬퍼.
 
 ## 🛤 데이터 파이프라인 (`data_pipeline/`)
 
-> 모든 파이프라인 스크립트가 이 폴더에 있고, 숫자 prefix로 실행 순서가 명확하다.
+> 파일 이름의 숫자가 곧 실행 순서. Stage 0 → 1 → 2 → 3 → 3.5 → 4 → 5.
 
-### `data_pipeline/0_seed_problems.py`
-**Stage 0**: HuggingFace에서 MetaMathQA-40K 데이터셋을 받아 학습용 시드 문제를 뽑는다.
+### `data_pipeline/0_seed_problems.py` — Stage 0
+**시드 문제 모으기**. HuggingFace에서 MetaMathQA-40K(수학 문제 모음)를 받아 GSM8K 계열만 골라낸 뒤, 같은 문제를 6 페르소나에 복제한다.
 
-처리 흐름:
-1. `type` 컬럼이 `GSM_`로 시작하는 행만 필터 (MATH_ 제외)
-2. `query` 컬럼 기준 중복 제거 (AnsAug 같은 답안 변형이 같은 질문에 다른 답을 다는 걸 제거)
-3. unique query 풀에서 N개 무작위 픽 (현재는 난이도 버킷팅 안 함 — GSM_ 계열만 쓰므로 동등 취급)
-4. 같은 문제를 6 페르소나에 복제 → `data_pipeline/output/seed_problems.jsonl` 저장
+- 입력: HuggingFace `meta-math/MetaMathQA-40K`
+- 출력: `data_pipeline/output/seed_problems.jsonl` (N × 6 행)
+- 한 행: `{problem_id, persona, question, gt_answer, ...}`
 
-### `data_pipeline/1_synthesize_sft.py`
-**Stage 1**: Stage 0의 각 (문제, 페르소나) 쌍에 대해 GPT-4o로 페르소나 조건 풀이를 합성한다.
+### `data_pipeline/1_synthesize_sft.py` — Stage 1
+**SFT 학습 데이터 만들기**. 시드 jsonl의 각 (문제, 페르소나)에 대해 GPT-4o로 *그 페르소나에 맞는 풀이* 를 N개씩 합성한다.
 
-각 쌍당 `--solutions-per-row`(기본 5)개의 풀이를 ThreadPoolExecutor로 병렬 합성. system prompt는 `judge_prompts.GENERATOR_SYSTEM`에 페르소나 정보를 주입한 것. 결과는 `data_pipeline/output/sft_data.jsonl`. SFT 학습의 입력.
+- 입력: `seed_problems.jsonl` + `personas.json` + `judge_prompts.GENERATOR_SYSTEM`
+- 출력: `data_pipeline/output/sft_data.jsonl`
+- 한 행: 합성된 풀이 1개 (`solution_text` + `steps`)
 
-### `data_pipeline/2_train_sft.py`
-**Stage 2**: Stage 1의 sft_data.jsonl로 base LLM(예: Qwen3-0.6B)을 SFT(supervised fine-tuning)로 학습.
+### `data_pipeline/2_train_sft.py` — Stage 2
+**SFT 학습**. 합성 데이터로 Qwen3 base 모델을 LoRA fine-tune. 결과 모델이 이후 단계의 *기준 모델(π_ref)* 이 된다.
 
-LoRA + Accelerate로 효율 학습. 결과 체크포인트가 `checkpoints/sft_ref/`에 저장되고, 이후 Stage 3·4에서 **π_ref(reference 모델)**로 쓰인다. 두 모드 공통.
+- 입력: `sft_data.jsonl` + base 모델 (예: `Qwen/Qwen3-0.6B`)
+- 출력: `checkpoints/sft_ref/` (LoRA adapter)
 
-### `data_pipeline/3_build_pairs.py`
-**Stage 3**: π_ref로 *on-policy 샘플링*(같은 prompt로 K개 풀이 생성) → GPT-4o judge로 각 step 라벨링 → **Type-1·Type-2 preference pair 빌드**.
+### `data_pipeline/3_build_pairs.py` — Stage 3
+**선호 페어 데이터 만들기**. π_ref로 풀이 K개씩 뽑고, GPT-4o가 각 step을 평가해 *chosen/rejected 페어*를 만든다.
+- **Type-1**: 같은 페르소나 내에서 정답 step vs 오답 step
+- **Type-2**: 같은 step이 한 페르소나엔 적절·다른 페르소나엔 부적절 (페르소나에 따라 평가가 *뒤집히는* 경우)
 
-처리 흐름:
-1. (문제, 페르소나) 쌍마다 π_ref로 K개 풀이 샘플
-2. GPT-4o `STEP_JUDGE`가 각 step을 acceptable/reject_math/reject_persona로 라벨
-3. 같은 belief 안에서 win/lose 페어 → **Type-1** (step_pair)
-4. GPT-4o `CROSS_BELIEF_CHECK`로 두 페르소나에서 라벨이 뒤집히는 step을 찾음 → **Type-2** (belief_flip_pair)
-5. 결과를 `data_pipeline/output/preference_pairs.jsonl`에 저장
+- 입력: `checkpoints/sft_ref/` (π_ref) + `seed_problems.jsonl` + `personas.json`
+- 출력: `data_pipeline/output/preference_pairs.jsonl`
+- 참고: vLLM 미설치 환경(Mac 등)에선 `inference_backend.py`로 자동 fallback
 
-vLLM 호출이 들어 있어서 Mac에선 `inference_backend.py`의 transformers fallback이 자동 적용.
+### `data_pipeline/3_5_analyze_flip_rate.py` — Stage 3.5
+**flip rate 측정**. 페어 데이터에서 *같은 step이 페르소나에 따라 평가가 뒤집히는 비율*을 계산. Full Step-DPO가 페르소나 신호를 진짜 학습할 수 있음을 보이는 핵심 지표.
 
-### `data_pipeline/3_5_analyze_flip_rate.py`
-**Stage 3.5**: Stage 3의 preference_pairs.jsonl을 스캔해서 **flip rate 통계**를 산출.
+- 입력: `preference_pairs.jsonl`
+- 출력: `data_pipeline/output/flip_stats.json` + 콘솔 표
 
-핵심 산출물 (`data_pipeline/output/flip_stats.json` + 콘솔 표):
-- Type-1 안에서 `reject_math` vs `reject_persona` 분포
-- Type-2 페어 비율 = label flip rate
-- 페르소나 6 × 6 flip 매트릭스 (어떤 페르소나 짝에서 flip이 자주 일어나나)
+### `data_pipeline/4_train_bc_stepdpo.py` — Stage 4
+**본 학습**. 페어 데이터로 π_ref를 DPO 학습. Step-DPO와 Full Step-DPO 모두 *같은 스크립트* — `--config`만 다르게 주면 된다:
+- `--config configs/step_dpo.yaml` → Step-DPO
+- `--config configs/default.yaml` → Full Step-DPO
 
-flip rate > 0이면 **(A7) belief-dependent reward 가정의 empirical 증거** (Proposition 3). Full 모드 핵심 산출물, Step-DPO 모드엔 의미 없음.
+- 입력: `checkpoints/sft_ref/` + `preference_pairs.jsonl` + `bc_stepdpo_loss.py`
+- 출력: `checkpoints/{bc_stepdpo, step_dpo}/`
 
-### `data_pipeline/4_train_bc_stepdpo.py`
-**Stage 4**: π_ref + preference_pairs.jsonl + `bc_stepdpo_loss.py`의 손실을 사용해 **BC-StepDPO 학습**.
+### `data_pipeline/5_evaluate.py` — Stage 5
+**평가**. 학습된 모델로 풀이를 생성하고 4가지 지표(최종 정답률, step별 수학 정합성, 페르소나 일관성, flip 케이스 처리 능력)를 측정. Step-DPO vs Full Step-DPO 비교에 사용.
 
-`configs/*.yaml`의 toggle 3개로 실행 모드 결정:
-- `disable_step_mask`: 켜면 vanilla DPO 형태 (prefix까지 학습 손실에 포함)
-- `disable_belief_token`: 켜면 페르소나 토큰을 prompt에서 제거 → Step-DPO 모드
-- `disable_type2`: 켜면 Type-2 페어 제외 → Step-DPO 모드
-
-→ **같은 스크립트에서 Vanilla DPO / Step-DPO / Conditional DPO / BC-StepDPO 모두 학습 가능**.
-
-### `data_pipeline/5_evaluate.py`
-**Stage 5**: 학습된 모델로 페르소나×문제 풀이를 생성해 4가지 지표를 측정.
-
-지표:
-1. **Final answer accuracy** (정답 exact match)
-2. **Step-level math accuracy** (GPT-4o judge가 각 step의 수학 정합성 평가)
-3. **Persona consistency** (GPT-4o judge가 페르소나 톤·어휘 부합도 평가)
-4. **Belief-flip handling** (Stage 3.5에서 찾은 flip 케이스에서 올바른 페르소나로 분기하는지)
-
-vLLM 호출 포함 → Mac에선 transformers fallback. 두 모드 비교용 동일 지표.
+- 입력: 학습된 체크포인트 + `seed_problems.jsonl`의 test split + `flip_stats.json`
+- 출력: `checkpoints/.../eval_results.json`
 
 ### `data_pipeline/run_full_pipeline.sh`
-**Stage 0~5를 일괄 실행**하는 orchestrator 셸 스크립트.
+**Stage 0 → 5를 한 번에 돌리는 셸 스크립트**.
 
-환경변수로 규모 조절: `N_PROBLEMS`(기본 1500), `SOLS_PER_ROW`(기본 5), `K_SAMPLES`(기본 8), `BASE_MODEL`(기본 Qwen3-0.6B). 풀스케일은 Linux+CUDA에서 도는 게 정상이고, Mac에선 Stage 0~2까지가 안전.
+규모 조절은 환경변수: `N_PROBLEMS`(기본 1500), `SOLS_PER_ROW`(기본 5), `K_SAMPLES`(기본 8), `BASE_MODEL`(기본 `Qwen/Qwen3-0.6B`). 풀스케일은 Linux+CUDA 권장.
 
 ---
 
