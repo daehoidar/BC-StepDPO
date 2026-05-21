@@ -41,14 +41,12 @@ def summarize_sft_data(out_dir: Path) -> str:
         md.append(f"⚠️ {seed_path} 없음. Stage 0 실패.\n")
     else:
         seed = load_jsonl(seed_path)
-        difficulty = Counter(r["difficulty"] for r in seed)
         persona = Counter(r["persona"] for r in seed)
         aug = Counter(r.get("augmentation_type", "?") for r in seed)
         n_problems = len({r["problem_id"] for r in seed})
 
         md.append("## Stage 0 — seed_problems.jsonl\n")
         md.append(f"- **Total rows**: {len(seed)} (= {n_problems} problems × {len(persona)} personas)")
-        md.append(f"- **Difficulty**: " + ", ".join(f"{k}={v}" for k, v in sorted(difficulty.items())))
         md.append(f"- **Augmentation types**: " + ", ".join(f"{k}={v}" for k, v in sorted(aug.items())))
         md.append("- **Personas**: " + ", ".join(f"{k}={v}" for k, v in sorted(persona.items())))
         md.append("\n### Sample row\n```json")

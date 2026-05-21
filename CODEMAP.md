@@ -118,7 +118,7 @@ GPT-4o judge용 system prompt 3종과 헬퍼.
 처리 흐름:
 1. `type` 컬럼이 `GSM_`로 시작하는 행만 필터 (MATH_ 제외)
 2. `query` 컬럼 기준 중복 제거 (AnsAug 같은 답안 변형이 같은 질문에 다른 답을 다는 걸 제거)
-3. easy/medium 버킷에서 N개 무작위 픽
+3. unique query 풀에서 N개 무작위 픽 (현재는 난이도 버킷팅 안 함 — GSM_ 계열만 쓰므로 동등 취급)
 4. 같은 문제를 6 페르소나에 복제 → `data_pipeline/output/seed_problems.jsonl` 저장
 
 ### `data_pipeline/1_synthesize_sft.py`

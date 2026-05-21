@@ -11,10 +11,13 @@
 - AnsAug가 같은 query 위에 다른 response를 붙이므로 학습 데이터 중복을 유발.
   → **query 컬럼 기준 dedupe**로 unique 문제만 채택.
   (Rephrased/FOBAR/SV는 query가 달라 자연스럽게 별 행으로 살아남음.)
-- 난이도 버킷팅은 response 내 GSM8K 형식 <<X+Y=Z>> 마커 개수 + query 길이로 추정.
-  마커가 없는 변형(FOBAR/SV 일부)은 query 길이만으로 보수적 분류.
 - 같은 문제를 6 페르소나 모두에 복제 배정 (belief_pair 단계의 cross-persona
   비교 자연 발생을 위함).
+
+난이도 분류 정책 (현재):
+- GSM 계열만 사용하므로 *지금은* easy/medium/hard 분류를 하지 않는다.
+- 후속에서 다시 분류가 필요해지면 `difficulty_bucket()`을 정의하고 dedupe된
+  unique_rows를 분류 가능 (이전 구현 git history 참조).
 
 출력: data_pipeline/output/seed_problems.jsonl
 한 행 = (문제, 페르소나) 한 쌍. 총 행 수 = N × 6.
@@ -35,32 +38,8 @@ sys.path.insert(0, str(REPO_ROOT))
 
 from utils import load_personas  # noqa: E402
 
-# 6 페르소나가 공통으로 사용할 난이도 버킷 (hard 제외).
-COMMON_BUCKETS = ["easy", "medium"]
-
-OPS_RE = re.compile(r"<<[^>]+>>")
 # MetaMathQA response 형식: "...calculations...\nThe answer is: X" 또는 "The answer is X"
 ANS_RE = re.compile(r"The answer is:?\s*([^\.\n]+?)\.?\s*$", re.MULTILINE)
-
-
-def difficulty_bucket(query: str, response: str) -> str:
-    """response의 <<...>> 마커 개수 + query 길이로 난이도 추정.
-
-    GSM8K augmentation은 보통 원본의 <<X+Y=Z>> 형식을 보존한다. Rephrased/FOBAR/SV
-    중 일부는 마커가 사라질 수 있어 fallback으로 query 길이만 본다.
-    """
-    n_ops = len(OPS_RE.findall(response))
-    q_words = len(query.split())
-    if n_ops > 0:
-        if n_ops <= 2 and q_words <= 30:
-            return "easy"
-        if n_ops <= 4 and q_words <= 60:
-            return "medium"
-        return "hard"
-    # 마커 없음 → query 길이로 보수적 분류
-    if q_words <= 30:
-        return "medium"
-    return "hard"
 
 
 def extract_gt_answer(response: str) -> str:
@@ -118,33 +97,32 @@ def main():
     print(f"[dedupe] unique query: {len(unique_rows)} "
           f"(removed {len(filtered) - len(unique_rows)} duplicate-query rows)")
 
-    # 버킷 분류
-    buckets = {"easy": [], "medium": [], "hard": []}
-    for idx, it in enumerate(unique_rows):
-        b = difficulty_bucket(it["query"], it.get("response", ""))
-        buckets[b].append({
+    # 난이도 분류 생략 (위 docstring 참조).
+    # unique_rows 전체를 공통 풀로 사용.
+    candidates = [
+        {
             "problem_id": f"metamath_{idx}",
             "question": it["query"],
             "gt_answer_raw": it["response"],
             "gt_answer": extract_gt_answer(it["response"]),
             "augmentation_type": it.get("type", ""),
-            "difficulty": b,
-            "n_ops": len(OPS_RE.findall(it.get("response", ""))),
-        })
-    for b, lst in buckets.items():
-        print(f"[bucket] {b}: {len(lst)}")
+        }
+        for idx, it in enumerate(unique_rows)
+    ]
 
-    # 공통 풀 구성 (easy + medium)
-    common_pool = []
-    for b in COMMON_BUCKETS:
-        common_pool.extend(buckets[b])
-    print(f"[common pool] {len(common_pool)} (buckets={COMMON_BUCKETS})")
-
-    random.shuffle(common_pool)
-    picked = common_pool[: args.n_problems]
+    random.shuffle(candidates)
+    picked = candidates[: args.n_problems]
     if len(picked) < args.n_problems:
         print(f"[warn] 요청 {args.n_problems}개 대비 풀 크기 {len(picked)}개. 가능한 만큼만 사용.")
-    print(f"[pick] {len(picked)}개 문제 선정")
+    print(f"[pick] {len(picked)}개 문제 선정 (풀 크기 {len(candidates)})")
+
+    # augmentation_type 분포 확인 (난이도 대신 augmentation 비중을 통계로 보고)
+    aug_dist: dict[str, int] = {}
+    for p in picked:
+        aug_dist[p["augmentation_type"]] = aug_dist.get(p["augmentation_type"], 0) + 1
+    print("[picked dist by augmentation_type]")
+    for t, n in sorted(aug_dist.items()):
+        print(f"  - {t}: {n}")
 
     # personas.json에서 페르소나 id 목록 로드
     personas = load_personas(REPO_ROOT / "personas.json")
@@ -162,7 +140,6 @@ def main():
                     "question": item["question"],
                     "gt_answer": item["gt_answer"],
                     "gt_answer_raw": item["gt_answer_raw"],
-                    "difficulty": item["difficulty"],
                     "augmentation_type": item["augmentation_type"],
                 }
                 f.write(json.dumps(row, ensure_ascii=False) + "\n")

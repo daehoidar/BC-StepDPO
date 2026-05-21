@@ -57,7 +57,7 @@ Persona-Step-DPO/
   curriculum/
     achievement_standards_2022.json      2022 개정 수학과 성취기준 254개
   data_pipeline/
-    0_seed_problems.py                   GSM8K 난이도 버킷팅 (easy + medium)
+    0_seed_problems.py                   MetaMathQA-40K GSM_ 필터 + query dedupe
     1_synthesize_sft.py                  GPT-4o로 페르소나별 풀이 합성
     2_train_sft.py                       SFT (reference 모델 학습)
     3_build_pairs.py                     Type-1 + Type-2 preference pair 구축

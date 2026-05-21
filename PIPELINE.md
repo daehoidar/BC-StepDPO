@@ -81,8 +81,10 @@
 1. `type` 컬럼이 `GSM_`로 시작하는 행만 필터 (MATH_ 제외)
 2. `query` 컬럼 기준 dedupe — *AnsAug*가 같은 query에 다른 response를 붙이는
    행을 만들기 때문에 학습 데이터 중복 제거 필수
-3. `<<X+Y=Z>>` 마커 개수 + query 길이로 easy/medium/hard 버킷
-4. easy + medium 풀에서 N개 무작위 픽 → 6 페르소나에 복제 배정
+3. 난이도 버킷팅 *없음* (현재). GSM_ 계열만 쓰므로 모든 unique query를
+   동등하게 풀에 둠 — augmentation 변형(FOBAR/SV/Rephrased)이 마커를 잃어도
+   풀에서 빠지지 않음.
+4. 풀에서 N개 무작위 픽 → 6 페르소나에 복제 배정
 
 **출력**: `data_pipeline/output/seed_problems.jsonl` — N × 6 행
 
@@ -93,7 +95,7 @@
   "question": "Janet's ducks lay 16 eggs per day. ...",
   "gt_answer": "18",
   "gt_answer_raw": "Janet sells <<16-3-4=9>>9 eggs ... The answer is: 18",
-  "difficulty": "easy",
+  "augmentation_type": "GSM_AnsAug",
   "augmentation_type": "GSM_AnsAug"
 }
 ```
@@ -120,7 +122,7 @@
   "persona_tag": "<elem_low>",
   "solution_text": "Step 1: Janet starts with 16 eggs ...",
   "steps": ["Step 1: ...", "Step 2: ...", ...],
-  "difficulty": "easy"
+  "augmentation_type": "GSM_AnsAug"
 }
 ```
 

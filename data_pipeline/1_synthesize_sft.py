@@ -14,7 +14,7 @@ Output format (JSONL):
       "persona_tag": "<초등-하위권>",
       "solution_text": "Step 1: ...\\nStep 2: ...",
       "steps": ["Step 1: ...", "Step 2: ..."],
-      "difficulty": "easy"
+      "augmentation_type": "GSM_AnsAug"
     }
 
 Usage:
@@ -79,7 +79,7 @@ def generate_one_solution(
                 "persona_tag": persona["tag"],
                 "solution_text": solution_text,
                 "steps": steps,
-                "difficulty": seed_row.get("difficulty"),
+                "augmentation_type": seed_row.get("augmentation_type"),
             }
         except Exception as e:
             print(f"[retry {attempt+1}] {e}")
