@@ -37,24 +37,38 @@ def load_jsonl(path: str) -> list[dict]:
     return rows
 
 
-def format_sft_text(row: dict) -> str:
-    """SFT 학습 형식: <persona> Problem + Solution.
-
-    MetaMathQA 영어 입력에 맞게 'Problem:'·'Solution:' 헤더 사용.
-    추론·재학습 시점에도 동일 헤더가 들어가야 분포 일치.
-    """
+def format_sft_prompt(row: dict) -> str:
+    """SFT 프롬프트 형식 (정답 제외): <persona> Problem + Solution 헤더."""
     return (
         f"{row['persona_tag']}\n"
         f"Problem: {row['problem']}\n"
         f"Solution:\n"
-        f"{row['solution_text']}"
     )
+
+
+def format_sft_text(row: dict) -> str:
+    """SFT 학습 형식 전체 텍스트.
+
+    MetaMathQA 영어 입력에 맞게 'Problem:'·'Solution:' 헤더 사용.
+    추론·재학습 시점에도 동일 헤더가 들어가야 분포 일치.
+    """
+    return format_sft_prompt(row) + row['solution_text']
 
 
 def tokenize_for_sft(tokenizer, row: dict, max_len: int) -> dict:
     text = format_sft_text(row)
     enc = tokenizer(text, truncation=True, max_length=max_len, add_special_tokens=False)
-    enc["labels"] = enc["input_ids"].copy()
+    
+    prompt_text = format_sft_prompt(row)
+    prompt_enc = tokenizer(prompt_text, add_special_tokens=False)
+    prompt_len = len(prompt_enc["input_ids"])
+    
+    labels = enc["input_ids"].copy()
+    # 프롬프트 부분은 Loss 계산에서 제외되도록 -100으로 마스킹
+    mask_len = min(prompt_len, len(labels))
+    labels[:mask_len] = [-100] * mask_len
+    enc["labels"] = labels
+    
     return enc
 
 

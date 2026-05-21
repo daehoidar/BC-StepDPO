@@ -12,15 +12,15 @@ Output format (JSONL):
       "ground_truth": "5/6",
       "persona_id": "elem_low",
       "persona_tag": "<초등-하위권>",
-      "solution_text": "Step 1: ...\\nStep 2: ...",
+      "solution_text": "Step 1: ...\nStep 2: ...",
       "steps": ["Step 1: ...", "Step 2: ..."],
       "augmentation_type": "GSM_AnsAug"
     }
 
 Usage:
-    python data_pipeline/1_synthesize_sft.py \\
-        --seed-problems data_pipeline/output/seed_problems.jsonl \\
-        --solutions-per-row 5 \\
+    python data_pipeline/1_synthesize_sft.py \
+        --seed-problems data_pipeline/output/seed_problems.jsonl \
+        --solutions-per-row 5 \
         --output data_pipeline/output/sft_data.jsonl
 """
 from __future__ import annotations
@@ -34,6 +34,7 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
+import openai
 from openai import OpenAI  # noqa: E402
 from judge_prompts import (  # noqa: E402
     GENERATOR_SYSTEM, GENERATOR_USER_TEMPLATE, build_generator_kwargs,
@@ -81,10 +82,19 @@ def generate_one_solution(
                 "steps": steps,
                 "augmentation_type": seed_row.get("augmentation_type"),
             }
+        except openai.AuthenticationError as e:
+            print(f"[Fatal Error] API Key / Auth failed: {e}")
+            raise  # 인증 에러 등 치명적 에러는 즉시 중단
         except Exception as e:
             print(f"[retry {attempt+1}] {e}")
             time.sleep(2 ** attempt)
-    return None
+            
+    # 최대 재시도 후에도 실패한 경우 추적을 위해 남김
+    return {
+        "_error": True, 
+        "problem_id": seed_row.get("problem_id"), 
+        "persona_id": persona.get("id")
+    }
 
 
 def main():
@@ -125,9 +135,13 @@ def main():
     print(f"[tasks] {len(tasks)}  (~ ${len(tasks) * 0.002:.2f} estimated cost)")
 
     out_path = Path(args.output)
+    error_path = out_path.parent / "errors.jsonl"
     out_path.parent.mkdir(parents=True, exist_ok=True)
     n_success = 0
+    n_errors = 0
+    
     with open(out_path, "w", encoding="utf-8") as fout, \
+         open(error_path, "w", encoding="utf-8") as ferr, \
          ThreadPoolExecutor(max_workers=args.workers) as ex:
         futures = [
             ex.submit(generate_one_solution, client, row, pers, args.model)
@@ -136,12 +150,18 @@ def main():
         for i, fut in enumerate(as_completed(futures)):
             result = fut.result()
             if result is not None:
-                fout.write(json.dumps(result, ensure_ascii=False) + "\n")
-                n_success += 1
+                if result.get("_error"):
+                    ferr.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    n_errors += 1
+                else:
+                    fout.write(json.dumps(result, ensure_ascii=False) + "\n")
+                    n_success += 1
             if (i + 1) % 100 == 0:
-                print(f"[{i+1}/{len(tasks)}] success: {n_success}")
+                print(f"[{i+1}/{len(tasks)}] success: {n_success}, errors: {n_errors}")
 
     print(f"Done. {n_success}/{len(tasks)} -> {out_path}")
+    if n_errors > 0:
+        print(f"Failed {n_errors} tasks. Check {error_path} for details.")
 
 
 if __name__ == "__main__":
