@@ -1,0 +1,6 @@
+{"problem_id": "demo_frac_001", "persona": "초등-상위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}
+{"problem_id": "demo_frac_001", "persona": "초등-하위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}
+{"problem_id": "demo_frac_001", "persona": "중등-상위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}
+{"problem_id": "demo_frac_001", "persona": "중등-하위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}
+{"problem_id": "demo_frac_001", "persona": "고등-상위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}
+{"problem_id": "demo_frac_001", "persona": "고등-하위권", "question": "1/2 + 1/3을 계산하여라.", "gt_answer": "5/6", "difficulty": "easy"}

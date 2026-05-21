@@ -3,6 +3,10 @@
 입력: 3_collect_errors.sh 산출물 (predictions/*.json, result=False만 필터링)
 출력: data_pipeline/output/located_errors/{idx}.json
 
+각 출력 행은 3번의 메타데이터(n_samples, n_failures, attempt_index, failure_rate,
+sampling_config)를 그대로 보존하고, 추가로 first_error_step_idx, located_by="gpt-4o"
+를 덧붙인다.
+
 TODO: Step-DPO 레포의 locate_error_by_gpt4.py를 베이스로 작성.
 페르소나 태그를 GPT-4o 프롬프트에 한 줄 추가하여 인지시키되,
 첫 오류 스텝 식별 자체는 수학 정합성 판정이므로 로직은 동일하게 유지.

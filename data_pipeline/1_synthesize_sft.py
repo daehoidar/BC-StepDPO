@@ -135,9 +135,9 @@ async def main_async(args):
             state["stopped"] = True
             return
         sys_p = system_prompts[row["persona"]]
-        user_msg = f"{row['persona']}\n{row['question']}\n\n위 문제를 단계별로 풀어주세요."
-        # 페르소나 태그를 user 메시지 헤더에 포함 (학습/추론 시점 입력 형태와 일치)
-        user_msg = f"<{row['persona']}>\n{row['question']}\n\n위 문제를 단계별로 풀어주세요."
+        # 페르소나 태그를 user 메시지 헤더에 포함 (학습/추론 시점 입력 형태와 일치).
+        # MetaMathQA가 영어 문제이므로 user instruction도 영어로.
+        user_msg = f"<{row['persona']}>\n{row['question']}\n\nPlease solve the problem step by step."
         try:
             resp = await call_one(client, sem, sys_p, user_msg)
         except Exception as e:

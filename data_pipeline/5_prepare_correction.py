@@ -3,6 +3,7 @@
 입력: data_pipeline/output/located_errors/*.json
 출력: data_pipeline/output/correction_inputs.jsonl
 
-TODO: Step-DPO 레포의 prepare_for_correction.py를 베이스로 작성.
-persona 필드를 보존하도록 한 줄 추가.
+3번에서 시작된 메타데이터(n_samples, n_failures, attempt_index, failure_rate,
+sampling_config)와 4번의 first_error_step_idx를 한 줄도 빠뜨리지 말고 보존한다.
+persona 필드도 보존.
 """
