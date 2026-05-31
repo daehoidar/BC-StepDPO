@@ -55,7 +55,10 @@ def generate_one_solution(
     model: str = "gpt-4o", max_retries: int = 3,
 ) -> dict | None:
     sys_prompt = GENERATOR_SYSTEM.format(**build_generator_kwargs(persona))
-    user_prompt = GENERATOR_USER_TEMPLATE.format(problem=seed_row["question"])
+    user_prompt = GENERATOR_USER_TEMPLATE.format(
+        problem=seed_row["question"],
+        ground_truth=seed_row.get("gt_answer", ""),
+    )
 
     for attempt in range(max_retries):
         try:
@@ -122,26 +125,50 @@ def main():
     seed_rows = load_seed_rows(Path(args.seed_problems))
     print(f"[load] {len(seed_rows)} seed rows, {len(personas)} personas")
 
-    # (seed_row, persona) x solutions_per_row 작업 큐
+    out_path = Path(args.output)
+    error_path = out_path.parent / "errors.jsonl"
+    out_path.parent.mkdir(parents=True, exist_ok=True)
+
+    # ── Resume 로직: 기존 output에서 (problem_id, persona_id)별 카운트 파악
+    done_counts: dict[tuple[str, str], int] = {}
+    if out_path.exists():
+        with open(out_path, encoding="utf-8") as f:
+            for line in f:
+                try:
+                    r = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                key = (r.get("problem_id", ""), r.get("persona_id", ""))
+                done_counts[key] = done_counts.get(key, 0) + 1
+        print(f"[resume] {sum(done_counts.values())} existing solutions across "
+              f"{len(done_counts)} (problem, persona) keys")
+
+    # (seed_row, persona) × (solutions_per_row - already_done) 작업 큐
     tasks = []
     for row in seed_rows:
         pers = personas.get(row["persona"])
         if pers is None:
             continue
-        for _ in range(args.solutions_per_row):
+        key = (row["problem_id"], pers["id"])
+        need = args.solutions_per_row - done_counts.get(key, 0)
+        if need <= 0:
+            continue
+        for _ in range(need):
             tasks.append((row, pers))
     if args.limit:
         tasks = tasks[: args.limit]
-    print(f"[tasks] {len(tasks)}  (~ ${len(tasks) * 0.002:.2f} estimated cost)")
+    print(f"[tasks] {len(tasks)} new calls "
+          f"(~ ${len(tasks) * 0.002:.2f} estimated cost)")
+    if not tasks:
+        print("Nothing to do. Output already complete.")
+        return
 
-    out_path = Path(args.output)
-    error_path = out_path.parent / "errors.jsonl"
-    out_path.parent.mkdir(parents=True, exist_ok=True)
     n_success = 0
     n_errors = 0
-    
-    with open(out_path, "w", encoding="utf-8") as fout, \
-         open(error_path, "w", encoding="utf-8") as ferr, \
+
+    # append 모드 — 기존 데이터 보존하고 뒤에 이어 쓰기
+    with open(out_path, "a", encoding="utf-8") as fout, \
+         open(error_path, "a", encoding="utf-8") as ferr, \
          ThreadPoolExecutor(max_workers=args.workers) as ex:
         futures = [
             ex.submit(generate_one_solution, client, row, pers, args.model)
