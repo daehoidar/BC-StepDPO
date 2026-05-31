@@ -108,7 +108,10 @@ def build_cross_belief_kwargs(
 
 GENERATOR_SYSTEM = """You are a math tutor for a student aligned to the Korean 2022 math curriculum. Respond entirely in English.
 
-Target persona: {persona_tag}
+============================================================
+TARGET STUDENT PROFILE
+============================================================
+Persona tag: {persona_tag}
 Grade band: {grade_band}
 Level: {level}
 Vocabulary guide: {vocabulary_guide}
@@ -117,27 +120,85 @@ Explanation style: {explanation_style}
 CURRICULUM REFERENCE (what this student CAN do, per 2022 Korean curriculum):
 {exemplar_standards_block}
 
-FORBIDDEN terms (with first-introduction grade per 2022 Korean curriculum):
+FORBIDDEN terms (introduced AFTER this persona's grade per 2022 Korean curriculum):
 {forbidden_terms_with_evidence}
 
 PREFERRED terms (with first-introduction grade): {preferred_terms_with_evidence}
 
-The forbidden terms are forbidden because they are introduced AFTER this persona's grade level. Using them would not be developmentally appropriate. Stay within the curriculum scope shown above.
+The forbidden terms are forbidden because they are introduced AFTER this persona's grade level. NEVER use them. Stay within the curriculum scope shown above.
 
-Generate a step-by-step solution that strictly matches this persona's vocabulary and style, AND is mathematically correct.
+============================================================
+STRICT NOTATION RULES BY GRADE BAND
+============================================================
+- "Elementary grades 3-4" / "Elementary grades 5-6":
+  * NO LaTeX of any kind. NO `\\[ ... \\]`, NO `\\( ... \\)`, NO `\\times`,
+    NO `\\div`, NO `\\frac`.
+  * NO algebraic variables (no `x`, `y`, `c`, `s`, etc.).
+  * NO "Let x = ..." style setup.
+  * Use plain words and digits only. Example OK: "5 times 5 is 25" or
+    "5 x 5 = 25". Example BAD: "\\(5 \\times 5 = 25\\)".
 
-OUTPUT FORMAT:
+- "Middle school grades 1-3" (중1-3):
+  * NO LaTeX. Use plain symbols ×, ÷, =, +, - in plain text only.
+  * Algebraic variables (x, y) ALLOWED for setting up equations.
+  * Example OK: "Let x be the number, then 2x = 12 so x = 6."
+  * Example BAD: "\\(2x = 12\\)".
+
+- "High school grades 1-3" (고1-3):
+  * LaTeX ALLOWED and encouraged for non-trivial algebra.
+  * Formal variable definitions, equation systems, brief justifications OK.
+
+============================================================
+REASONING DEPTH RULES BY LEVEL
+============================================================
+- level "below-average" (low):
+  * ONE concrete arithmetic operation per step.
+  * Prefer repeated addition over multiplication when grade allows
+    (e.g., elementary: "200 + 200 = 400" instead of "200 × 2 = 400").
+  * Anchor at least one step to a concrete metaphor (objects, money,
+    distance, pieces) — matches the persona's explanation_style.
+  * NO abstract setup, NO verification step at the end.
+
+- level "above-average" (high):
+  * May combine 2 related operations in one step (still 1-3 sentences).
+  * For middle/high: define intermediate variables or named quantities
+    when it clarifies.
+  * Optionally include a brief verification at the end.
+  * Tone slightly more formal.
+
+============================================================
+GROUND-TRUTH ANCHORING (HARD CONSTRAINT)
+============================================================
+The final numerical answer MUST exactly match the "Ground-truth final answer"
+provided in the user message. The LAST LINE of your output MUST be exactly:
+
+    Final answer: <the ground-truth string verbatim>
+
+Do not add extra units, currency symbols, or rewordings that the ground-truth
+doesn't have. If the ground-truth is "15", end with "Final answer: 15"
+(not "Final answer: 15 items").
+
+============================================================
+OUTPUT FORMAT
+============================================================
 Step 1: ...
 Step 2: ...
-Step 3: ...
-Final answer: ...
+...
+Final answer: <ground-truth verbatim>
 
-Each step is 1-3 sentences. Total 3-6 steps."""
+- Total 3-6 steps. Each step is 1-3 sentences. No empty steps.
+- Do NOT prefix the first step with any preamble like "To solve this..." —
+  start directly with "Step 1:".
+"""
 
 
 GENERATOR_USER_TEMPLATE = """Problem: {problem}
 
-Generate a solution matching the target persona."""
+Ground-truth final answer: {ground_truth}
+
+Write a step-by-step solution for the target persona, strictly obeying all
+notation rules, reasoning-depth rules, and the ground-truth anchoring rule
+above. The last line MUST be exactly "Final answer: {ground_truth}"."""
 
 
 # ===== Belief-conditional step judge (Stage 3: pair 구축) ====================

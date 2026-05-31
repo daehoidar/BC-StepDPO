@@ -110,7 +110,14 @@ def main():
     if tokenizer.pad_token is None:
         tokenizer.pad_token = tokenizer.eos_token
 
-    model = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=torch.bfloat16)
+    # MPS(Apple Silicon)는 bfloat16 미지원이 흔함 → float32 fallback.
+    if torch.backends.mps.is_available():
+        model_dtype = torch.float32
+    elif torch.cuda.is_available():
+        model_dtype = torch.bfloat16
+    else:
+        model_dtype = torch.float32
+    model = AutoModelForCausalLM.from_pretrained(args.base_model, torch_dtype=model_dtype)
     if sft_cfg.get("use_lora", True):
         lora_cfg = LoraConfig(
             r=sft_cfg.get("lora_r", 16),
