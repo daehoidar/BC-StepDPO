@@ -37,7 +37,7 @@ from transformers import (  # noqa: E402
     get_cosine_schedule_with_warmup,
 )
 
-from bc_stepdpo_loss import PERSONA_TO_IDX, BCStepDPOBatch, bc_stepdpo_loss  # noqa: E402
+from losses.bc_stepdpo_loss import PERSONA_TO_IDX, BCStepDPOBatch, bc_stepdpo_loss  # noqa: E402
 
 
 def load_jsonl(path: str) -> list[dict]:
