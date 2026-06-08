@@ -1,18 +1,27 @@
 """
-eval/evaluate.py
+data_pipeline/5_evaluate.py
+
+Step DPO / Full-Step DPO 공용 평가 스크립트.
 
 평가 지표:
 1. GSM8K-ko final answer accuracy
 2. Step-level math accuracy (GPT-4o judge)
 3. Persona consistency (GPT-4o judge)
-4. Belief-flip handling: 학습 데이터의 flip 케이스에 대해 정답률 측정
 
-Usage:
-    python eval/evaluate.py \\
+Usage (Step DPO):
+    python data_pipeline/5_evaluate.py \\
         --model checkpoints/bc_stepdpo \\
         --test-set data/test.jsonl \\
-        --flip-stats data/flip_stats.json \\
-        --output eval_results.json
+        --output checkpoints/bc_stepdpo/eval_results.json
+
+Usage (Full-Step DPO):
+    python data_pipeline/5_evaluate.py \\
+        --model checkpoints/fullstepdpo \\
+        --test-set data/test.jsonl \\
+        --output checkpoints/fullstepdpo/eval_results.json
+
+--flip-stats: Step DPO 전용 선택 인자. 3_5_analyze_flip_rate.py 산출 파일 경로.
+              생략 시 해당 통계는 결과에서 제외됨.
 """
 import argparse
 import json
