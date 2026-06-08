@@ -1,6 +1,6 @@
-"""data_pipeline_stepdpo/3_locate_first_error.py
+"""data_pipeline_stepdpo/3a_locate_first_error.py
 
-Step-DPO Stage 3: 최초 오류 스텝 검출 + 페르소나 cascade 검증.
+Step-DPO Stage 3a: 최초 오류 스텝 검출 + 페르소나 cascade 검증.
 
 두 가지 운용 모드:
   (1) Shared 모드 (권장):

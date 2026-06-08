@@ -1,8 +1,8 @@
-"""data_pipeline_stepdpo/4_build_pairs.py
+"""data_pipeline_stepdpo/3b_build_pairs.py
 
-Step-DPO Stage 4: 페어 빌드.
+Step-DPO Stage 3b: 페어 빌드.
 
-3_locate_first_error.py 산출의 each row에 대해 한 개의 (chosen, rejected)
+3a_locate_first_error.py 산출의 each row에 대해 한 개의 (chosen, rejected)
 페어를 만든다. `error_type ∈ {persona, math}`에 따라 rectify prompt를 분기:
 
   - error_type == "persona": 페르소나 친화 prompt — forbidden term/근거 코드를

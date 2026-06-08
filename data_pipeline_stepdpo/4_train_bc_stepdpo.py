@@ -1,13 +1,13 @@
 """
-train/train_bc_stepdpo.py
+data_pipeline_stepdpo/4_train_bc_stepdpo.py
 
 Stage 4: BC-StepDPO 학습.
 
 Usage:
-    accelerate launch train/train_bc_stepdpo.py \\
+    accelerate launch data_pipeline_stepdpo/4_train_bc_stepdpo.py \\
         --base-model checkpoints/sft_ref \\
-        --pairs data/preference_pairs.jsonl \\
-        --config configs/default.yaml \\
+        --pairs data_pipeline/output/stepdpo/pairs_stepdpo.jsonl \\
+        --config configs/step_dpo.yaml \\
         --output checkpoints/bc_stepdpo
 
 Ablation toggle (configs/default.yaml에서 변경):

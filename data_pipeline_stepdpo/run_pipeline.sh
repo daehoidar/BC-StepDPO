@@ -43,17 +43,17 @@ python data_pipeline/shared_sampling.py \
     --output "$OUT_DIR/samples_with_persona_labels.jsonl"
 
 echo "=== Stage 3a: 최초 오류 스텝 검출 ==="
-python data_pipeline_stepdpo/3_locate_first_error.py \
+python data_pipeline_stepdpo/3a_locate_first_error.py \
     --samples-path "$OUT_DIR/samples_with_persona_labels.jsonl" \
     --output "$OUT_DIR/stepdpo/located_errors.jsonl"
 
 echo "=== Stage 3b: win/lose 페어 구성 ==="
-python data_pipeline_stepdpo/4_build_pairs.py \
+python data_pipeline_stepdpo/3b_build_pairs.py \
     --located "$OUT_DIR/stepdpo/located_errors.jsonl" \
     --output "$OUT_DIR/stepdpo/pairs_stepdpo.jsonl"
 
 echo "=== Stage 4: BC-StepDPO 학습 ==="
-accelerate launch data_pipeline/4_train_bc_stepdpo.py \
+accelerate launch data_pipeline_stepdpo/4_train_bc_stepdpo.py \
     --base-model "$CKPT_DIR/sft_ref" \
     --pairs "$OUT_DIR/stepdpo/pairs_stepdpo.jsonl" \
     --config configs/step_dpo.yaml \

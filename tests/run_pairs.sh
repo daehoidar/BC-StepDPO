@@ -1,32 +1,24 @@
 #!/usr/bin/env bash
 # tests/run_pairs.sh — Stage 3 (preference pair 빌드) 소규모 테스트.
 #
-# 모드 인자(필수): step_dpo | full
-#   step_dpo : data_pipeline_stepdpo/ 사용 (first-error → rectify, Type-1만)
-#   full     : data_pipeline/3_build_pairs.py 사용 (Type-1 + Type-2 belief_flip)
-#
-# 두 모드 모두 출력 스키마는 동일(persona_id/persona_tag/prefix_steps/
-# step_win/step_lose/pair_type/...) → data_pipeline/4_train_bc_stepdpo.py가
-# 그대로 학습 가능.
-#
-# Mac M-series는 vLLM 미지원이라 자동으로 transformers fallback 사용.
+# 모드 인자(필수): step_dpo | fullstepdpo
+#   step_dpo    : data_pipeline_stepdpo/ 사용 (3a locate → 3b build_pairs)
+#   fullstepdpo : data_pipeline_fullstepdpo/ 사용 (3a mc_rollout → 3b prm → 3c score_pack)
 #
 # 사용:
 #   bash tests/run_pairs.sh step_dpo
-#   bash tests/run_pairs.sh full
-#   K_SAMPLES=4 BASE_MODEL=Qwen/Qwen3-0.6B bash tests/run_pairs.sh full
+#   bash tests/run_pairs.sh fullstepdpo
+#   K_SAMPLES=4 BASE_MODEL=Qwen/Qwen3-0.6B bash tests/run_pairs.sh step_dpo
 #
 # 출력:
-#   tests/output/pairs_{mode}/preference_pairs.jsonl
-#   tests/output/pairs_{mode}/flip_stats.json   (full 모드만 의미 있음)
-#   tests/output/pairs_{mode}/REPORT.md
+#   tests/output/pairs_{mode}/
 
 set -euo pipefail
 : "${OPENAI_API_KEY:?OPENAI_API_KEY를 먼저 설정하세요}"
 
 MODE="${1:-}"
-if [[ "$MODE" != "step_dpo" && "$MODE" != "full" ]]; then
-    echo "[usage] bash tests/run_pairs.sh <step_dpo|full>"
+if [[ "$MODE" != "step_dpo" && "$MODE" != "fullstepdpo" ]]; then
+    echo "[usage] bash tests/run_pairs.sh <step_dpo|fullstepdpo>"
     exit 1
 fi
 
@@ -50,9 +42,8 @@ fi
 mkdir -p "$OUT_DIR"
 
 if [[ "$MODE" == "step_dpo" ]]; then
-    # Step-DPO: data_pipeline_stepdpo/의 2단(locate → rectify) 파이프라인.
     echo "=== [test/pairs:step_dpo] Stage 3a: first-error localization (K=$K_SAMPLES) ==="
-    python data_pipeline_stepdpo/3_locate_first_error.py \
+    python data_pipeline_stepdpo/3a_locate_first_error.py \
         --ref-model "$REF_MODEL" \
         --seed-problems "$IN_SEED" \
         --personas-path personas.json \
@@ -61,26 +52,34 @@ if [[ "$MODE" == "step_dpo" ]]; then
 
     echo
     echo "=== [test/pairs:step_dpo] Stage 3b: rectify → step_pair 빌드 ==="
-    python data_pipeline_stepdpo/4_build_pairs.py \
+    python data_pipeline_stepdpo/3b_build_pairs.py \
         --located "$OUT_DIR/located_errors.jsonl" \
         --output "$OUT_DIR/preference_pairs.jsonl"
 
-    # Step-DPO 모드엔 belief_flip이 없으므로 flip_stats는 의미가 없음 → skip.
 else
-    # Full Step-DPO (BC-StepDPO Type-1 + Type-2): 기존 단일 파일 파이프라인.
-    echo "=== [test/pairs:full] Stage 3: Type-1 + Type-2 pair 빌드 (ref=$REF_MODEL, K=$K_SAMPLES) ==="
-    python data_pipeline/3_build_pairs.py \
+    echo "=== [test/pairs:fullstepdpo] Stage 3a: MC 롤아웃 + step 라벨링 (K=$K_SAMPLES) ==="
+    python data_pipeline_fullstepdpo/3a_mc_rollout_label.py \
         --ref-model "$REF_MODEL" \
         --seed-problems "$IN_SEED" \
         --personas-path personas.json \
         --k-samples "$K_SAMPLES" \
-        --output "$OUT_DIR/preference_pairs.jsonl"
+        --output "$OUT_DIR/mc_labeled.jsonl"
 
     echo
-    echo "=== [test/pairs:full] Stage 3.5: flip rate 분석 ==="
-    python data_pipeline/3_5_analyze_flip_rate.py \
-        --pairs "$OUT_DIR/preference_pairs.jsonl" \
-        --output "$OUT_DIR/flip_stats.json" || echo "[warn] flip 분석 실패"
+    echo "=== [test/pairs:fullstepdpo] Stage 3b: PRM 학습 ==="
+    echo "[skip] PRM 학습은 테스트 환경에서 생략합니다."
+
+    echo
+    echo "=== [test/pairs:fullstepdpo] Stage 3c: PRM 스코어링 (PRM 있을 경우만) ==="
+    if [[ -n "${PRM_MODEL:-}" ]]; then
+        python data_pipeline_fullstepdpo/3c_score_and_pack.py \
+            --ref-model "$REF_MODEL" \
+            --prm-model "$PRM_MODEL" \
+            --seed-problems "$IN_SEED" \
+            --output "$OUT_DIR/chains_fullstepdpo.jsonl"
+    else
+        echo "[skip] PRM_MODEL 환경변수가 없어 3c를 건너뜁니다."
+    fi
 fi
 
 echo
