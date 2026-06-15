@@ -37,6 +37,7 @@ from judge_prompts import (  # noqa: E402
     build_cross_belief_kwargs,
 )
 from utils import load_personas, parse_steps  # noqa: E402
+from openai_client import make_openai_client  # noqa: E402
 from persona_verifier import PersonaVerifier  # noqa: E402
 
 
@@ -487,7 +488,7 @@ def main():
     args = parser.parse_args()
 
     Path(args.output).parent.mkdir(parents=True, exist_ok=True)
-    gpt_client = OpenAI()
+    gpt_client = make_openai_client()
     personas = load_personas(args.personas_path)
     persona_by_id = {p["id"]: p for p in personas}
 

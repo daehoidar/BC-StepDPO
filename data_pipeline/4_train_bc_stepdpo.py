@@ -37,7 +37,7 @@ from transformers import (  # noqa: E402
     get_cosine_schedule_with_warmup,
 )
 
-from bc_stepdpo_loss import PERSONA_TO_IDX, BCStepDPOBatch, bc_stepdpo_loss  # noqa: E402
+from losses.bc_stepdpo_loss import PERSONA_TO_IDX, BCStepDPOBatch, bc_stepdpo_loss  # noqa: E402
 
 
 def load_jsonl(path: str) -> list[dict]:
@@ -205,6 +205,8 @@ def main():
     global_step = 0
     for epoch in range(cfg["epochs"]):
         for batch in loader:
+            # 커스텀 dataclass 배치는 prepare()가 자동 이동 못 하므로 명시 이동
+            batch = batch.to(accelerator.device)
             with accelerator.accumulate(policy):
                 out = bc_stepdpo_loss(policy, ref, batch, beta=beta)
                 accelerator.backward(out["loss"])
