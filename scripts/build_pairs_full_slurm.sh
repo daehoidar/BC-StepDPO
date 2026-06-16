@@ -79,7 +79,7 @@ python data_pipeline/shared_sampling.py \
 
 # ── Stage 2: 수학 judge + 페어 구축 ───────────────────────────────────
 echo "=== [2/3] 수학 judge(GPT-4o) + Type-1/Type-2 페어 구축 ==="
-python data_pipeline/3_build_pairs.py \
+python data_pipeline_stepdpo/3_build_pairs.py \
     --samples-path "$SAMPLES" \
     --personas-path personas.json \
     --gpt-model "$GPT_MODEL" \
@@ -88,7 +88,7 @@ python data_pipeline/3_build_pairs.py \
 
 # ── Stage 3: 로그확률 차이 분석 ───────────────────────────────────────
 echo "=== [3/3] win/lose 로그확률 차이 분석 ==="
-python data_pipeline/7_logprob_analysis.py \
+python evaluation/7_logprob_analysis.py \
     --pairs "$PAIRS" \
     --base-model "$MERGED" \
     --model-label "SFT(pi_ref) — GPT-4o pairs" \

@@ -40,7 +40,7 @@ accelerate launch data_pipeline/2_train_sft.py \
     --config configs/default.yaml
 
 echo "=== Stage 3: Type-1 + Type-2 preference pair 구축 ==="
-python data_pipeline/3_build_pairs.py \
+python data_pipeline_stepdpo/3_build_pairs.py \
     --ref-model "$CKPT_DIR/sft_ref" \
     --seed-problems "$OUT_DIR/seed_problems.jsonl" \
     --personas-path personas.json \
@@ -48,19 +48,19 @@ python data_pipeline/3_build_pairs.py \
     --output "$OUT_DIR/preference_pairs.jsonl"
 
 echo "=== Stage 3.5: Label flip rate 통계 ==="
-python data_pipeline/3_5_analyze_flip_rate.py \
+python data_pipeline_stepdpo/3_5_analyze_flip_rate.py \
     --pairs "$OUT_DIR/preference_pairs.jsonl" \
     --output "$OUT_DIR/flip_stats.json"
 
 echo "=== Stage 4: BC-StepDPO 학습 ==="
-accelerate launch data_pipeline/4_train_bc_stepdpo.py \
+accelerate launch data_pipeline_stepdpo/4_train_bc_stepdpo.py \
     --base-model "$CKPT_DIR/sft_ref" \
     --pairs "$OUT_DIR/preference_pairs.jsonl" \
     --config configs/default.yaml \
     --output "$CKPT_DIR/bc_stepdpo"
 
 echo "=== Stage 5: 평가 ==="
-python data_pipeline/5_evaluate.py \
+python evaluation/5_evaluate.py \
     --model "$CKPT_DIR/bc_stepdpo" \
     --test-set "$OUT_DIR/test.jsonl" \
     --personas-path personas.json \

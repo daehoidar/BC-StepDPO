@@ -84,7 +84,7 @@ python data_pipeline/shared_sampling.py \
 
 # ── Stage 2: 수학 judge + 페어 ────────────────────────────────────────
 echo "=== [2/4] 수학 judge($MATH_JUDGE_MODEL) + cross-belief($GPT_MODEL) + 페어 ==="
-python data_pipeline/3_build_pairs.py \
+python data_pipeline_stepdpo/3_build_pairs.py \
     --samples-path "$SAMPLES" \
     --personas-path personas.json \
     --gpt-model "$GPT_MODEL" \
@@ -93,7 +93,7 @@ python data_pipeline/3_build_pairs.py \
 
 # ── Stage 3: 결과 정리 문서 ───────────────────────────────────────────
 echo "=== [3/4] 결과 정리 문서 생성 ==="
-python data_pipeline/summarize_bc_smoke.py \
+python evaluation/8_summarize_bc_smoke.py \
     --samples "$SAMPLES" --pairs "$PAIRS" \
     --train-log "logs/bc_pipe_${SLURM_JOB_ID:-manual}.out" \
     --output "$SUMMARY" || echo "[warn] summary 생성 실패(무시하고 계속)"
@@ -101,14 +101,14 @@ python data_pipeline/summarize_bc_smoke.py \
 # ── Stage 4: BC-StepDPO 학습 ──────────────────────────────────────────
 echo "=== [4/4] BC-StepDPO 학습 → $OUT ==="
 accelerate launch --num_processes 1 --mixed_precision bf16 \
-    data_pipeline/4_train_bc_stepdpo.py \
+    data_pipeline_stepdpo/4_train_bc_stepdpo.py \
     --base-model "$MERGED" \
     --pairs "$PAIRS" \
     --config "$CONFIG" \
     --output "$OUT"
 
 # 학습 로그가 채워진 뒤 문서 한 번 더 갱신
-python data_pipeline/summarize_bc_smoke.py \
+python evaluation/8_summarize_bc_smoke.py \
     --samples "$SAMPLES" --pairs "$PAIRS" \
     --train-log "logs/bc_pipe_${SLURM_JOB_ID:-manual}.out" \
     --output "$SUMMARY" || true

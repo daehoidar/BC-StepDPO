@@ -46,7 +46,7 @@ echo "=== node: $(hostname) ==="
 nvidia-smi || true
 
 echo "=== [1/2] 균형 평가 서브셋 생성 (per-persona=${PER_PERSONA}) ==="
-python data_pipeline/make_eval_subset.py \
+python evaluation/5_5_make_eval_subset.py \
     --input "$TEST_FULL" \
     --output "$EVAL_SUBSET" \
     --per-persona "$PER_PERSONA" \
@@ -54,7 +54,7 @@ python data_pipeline/make_eval_subset.py \
     --train data_pipeline/output/sft_train.jsonl
 
 echo "=== [2/2] 형식 준수 체크 (추론 + 분석) ==="
-python data_pipeline/6_check_format.py \
+python evaluation/6_check_format.py \
     --test-set "$EVAL_SUBSET" \
     --base-model "$BASE_MODEL" \
     --adapter "$ADAPTER" \

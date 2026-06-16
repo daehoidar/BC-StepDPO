@@ -77,20 +77,20 @@ python data_pipeline/shared_sampling.py \
 
 # ── Stage 2: judge + 페어 ─────────────────────────────────────────────
 echo "=== [2] math judge($MATH_JUDGE_MODEL) + cross-belief($GPT_MODEL) + 페어 ==="
-python data_pipeline/3_build_pairs.py \
+python data_pipeline_stepdpo/3_build_pairs.py \
     --samples-path "$SAMPLES" --personas-path personas.json \
     --gpt-model "$GPT_MODEL" --math-judge-model "$MATH_JUDGE_MODEL" \
     --output "$PAIRS"
 
 # ── Stage 3: 정리 문서 ────────────────────────────────────────────────
 echo "=== [3] 결과 정리 문서 ==="
-python data_pipeline/summarize_bc_smoke.py \
+python evaluation/8_summarize_bc_smoke.py \
     --samples "$SAMPLES" --pairs "$PAIRS" --output "$SUMMARY" || true
 
 # ── Stage 4: BC-StepDPO 학습 ──────────────────────────────────────────
 echo "=== [4] BC-StepDPO 학습 → $OUT ==="
 accelerate launch --num_processes 1 --mixed_precision bf16 \
-    data_pipeline/4_train_bc_stepdpo.py \
+    data_pipeline_stepdpo/4_train_bc_stepdpo.py \
     --base-model "$MERGED" --pairs "$PAIRS" --config "$CONFIG" --output "$OUT"
 
 echo "=== done ==="

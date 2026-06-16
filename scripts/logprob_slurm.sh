@@ -43,14 +43,14 @@ echo "=== node: $(hostname) ==="
 nvidia-smi || true
 
 echo "=== [1/2] 파일럿 선호쌍 생성 (held-out sft_test) ==="
-python data_pipeline/make_pilot_pairs.py \
+python useless/data_pipeline_stepdpo_make_pilot_pairs.py \
     --input data_pipeline/output/sft_test.jsonl \
     --personas-path personas.json \
     --output "$PAIRS" \
     --n-per-type "$N_PER_TYPE" --seed 0
 
 echo "=== [2/2] 로그확률 차이 분석 ==="
-python data_pipeline/7_logprob_analysis.py \
+python evaluation/7_logprob_analysis.py \
     --pairs "$PAIRS" \
     --base-model "$BASE_MODEL" \
     --adapter "$ADAPTER" \
