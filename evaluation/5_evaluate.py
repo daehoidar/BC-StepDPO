@@ -1,27 +1,22 @@
 """
-data_pipeline/5_evaluate.py
+evaluation/5_evaluate.py
 
 Step DPO / Full-Step DPO 공용 평가 스크립트.
 
-평가 지표:
-1. GSM8K-ko final answer accuracy
-2. Step-level math accuracy (GPT-4o judge)
-3. Persona consistency (GPT-4o judge)
+평가 지표 (Table 1 기준):
+1. final_answer_accuracy  — Final Acc.
+2. step_accuracy          — Step Acc.    (acceptable step 비율)
+3. persona_consistency    — Persona Cons. (1 - step_persona_err_rate)
+4. belief_flip_win_rate   — Belief-Flip  (held-out Type-2 페어 logprob win rate)
 
-Usage (Step DPO):
-    python data_pipeline/5_evaluate.py \\
+Usage:
+    python evaluation/5_evaluate.py \\
         --model checkpoints/bc_stepdpo \\
-        --test-set data/test.jsonl \\
+        --test-set data_pipeline/output/sft_test.jsonl \\
+        --pairs data_pipeline/output/preference_pairs.jsonl \\
         --output checkpoints/bc_stepdpo/eval_results.json
 
-Usage (Full-Step DPO):
-    python data_pipeline/5_evaluate.py \\
-        --model checkpoints/fullstepdpo \\
-        --test-set data/test.jsonl \\
-        --output checkpoints/fullstepdpo/eval_results.json
-
---flip-stats: Step DPO 전용 선택 인자. 3_5_analyze_flip_rate.py 산출 파일 경로.
-              생략 시 해당 통계는 결과에서 제외됨.
+--pairs: preference_pairs.jsonl (belief_flip_pair 포함). 생략 시 Belief-Flip 미측정.
 """
 import argparse
 import json
@@ -44,6 +39,10 @@ except ImportError:
         TransformersSamplingParams as SamplingParams,
     )
     _VLLM_AVAILABLE = False
+
+import torch  # noqa: E402
+import torch.nn.functional as F  # noqa: E402
+from transformers import AutoModelForCausalLM, AutoTokenizer  # noqa: E402
 
 from judge_prompts import (  # noqa: E402
     STEP_JUDGE_SYSTEM, STEP_JUDGE_USER_TEMPLATE, build_step_judge_kwargs,
@@ -131,11 +130,70 @@ def metric_step_judge(client: OpenAI, results: list[dict]) -> dict:
                 n_total += 1
         except Exception:
             continue
+    step_persona_err_rate = n_persona_err / max(1, n_total)
     return {
-        "step_accept_rate": n_accept / max(1, n_total),
-        "step_math_err_rate": n_math_err / max(1, n_total),
-        "step_persona_err_rate": n_persona_err / max(1, n_total),
+        "step_accuracy":       n_accept / max(1, n_total),
+        "persona_consistency": 1.0 - step_persona_err_rate,
+        "step_math_err_rate":  n_math_err / max(1, n_total),
+        "step_persona_err_rate": step_persona_err_rate,
         "n_steps_judged": n_total,
+    }
+
+
+def _step_logprob(model, tokenizer, context: str, step: str, device: str) -> float:
+    """teacher-forcing으로 step 토큰들의 log prob 합 반환."""
+    ctx_ids  = tokenizer(context, add_special_tokens=False)["input_ids"]
+    step_ids = tokenizer(step,    add_special_tokens=False)["input_ids"]
+    if not step_ids:
+        return 0.0
+    full_ids = torch.tensor([ctx_ids + step_ids], dtype=torch.long, device=device)
+    attn     = torch.ones_like(full_ids)
+    with torch.no_grad():
+        logits = model(input_ids=full_ids, attention_mask=attn).logits[0, :-1]
+    log_probs = F.log_softmax(logits.float(), dim=-1)
+    targets   = full_ids[0, 1:]
+    token_lp  = log_probs.gather(-1, targets.unsqueeze(-1)).squeeze(-1)
+    # step 토큰 구간만 합산
+    return token_lp[len(ctx_ids) - 1:].sum().item()
+
+
+def metric_belief_flip(model_path: str, pairs_path: str, device: str = "cuda") -> dict:
+    """held-out belief_flip_pair에서 logp(win) > logp(lose) 비율 측정.
+
+    pairs_path: preference_pairs.jsonl (belief_flip_pair 포함)
+    """
+    flip_pairs = []
+    with open(pairs_path, encoding="utf-8") as f:
+        for line in f:
+            p = json.loads(line)
+            if p.get("pair_type") == "belief_flip_pair":
+                flip_pairs.append(p)
+
+    if not flip_pairs:
+        return {"belief_flip_win_rate": None, "n_flip_pairs": 0}
+
+    tokenizer = AutoTokenizer.from_pretrained(model_path)
+    model = AutoModelForCausalLM.from_pretrained(
+        model_path, torch_dtype=torch.bfloat16,
+    ).to(device).eval()
+
+    n_win = 0
+    for p in flip_pairs:
+        persona_tag  = p.get("persona_tag", "")
+        prefix_steps = p.get("prefix_steps", [])
+        context = (
+            (f"{persona_tag}\n" if persona_tag else "")
+            + f"Problem: {p['problem']}\nSolution:\n"
+            + ("\n".join(prefix_steps) + "\n" if prefix_steps else "")
+        )
+        lp_win  = _step_logprob(model, tokenizer, context, p["step_win"],  device)
+        lp_lose = _step_logprob(model, tokenizer, context, p["step_lose"], device)
+        if lp_win > lp_lose:
+            n_win += 1
+
+    return {
+        "belief_flip_win_rate": n_win / len(flip_pairs),
+        "n_flip_pairs": len(flip_pairs),
     }
 
 
@@ -143,9 +201,12 @@ def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True)
     parser.add_argument("--test-set", required=True)
+    parser.add_argument("--pairs", default=None,
+                        help="preference_pairs.jsonl — Belief-Flip 측정용 (생략 시 스킵)")
     parser.add_argument("--flip-stats", default=None,
-                        help="data/flip_stats.json — 학습 데이터의 flip 통계")
-    parser.add_argument("--personas-path", default="data/personas.json")
+                        help="flip_stats.json — 학습 데이터 flip 통계 (선택)")
+    parser.add_argument("--personas-path", default="personas.json")
+    parser.add_argument("--device", default="cuda")
     parser.add_argument("--output", default="eval_results.json")
     args = parser.parse_args()
 
@@ -158,7 +219,7 @@ def main():
     results = generate(llm, problems, personas)
 
     print("Computing metrics...")
-    final_acc = metric_final_accuracy(results)
+    final_acc    = metric_final_accuracy(results)
     step_metrics = metric_step_judge(client, results)
 
     metrics = {
@@ -166,7 +227,15 @@ def main():
         **step_metrics,
     }
 
-    # flip 통계 정보가 있으면 로그
+    # Belief-Flip win rate
+    if args.pairs and Path(args.pairs).exists():
+        print("Computing Belief-Flip win rate...")
+        flip_metrics = metric_belief_flip(args.model, args.pairs, device=args.device)
+        metrics.update(flip_metrics)
+    else:
+        metrics["belief_flip_win_rate"] = None
+        metrics["n_flip_pairs"] = 0
+
     if args.flip_stats and Path(args.flip_stats).exists():
         with open(args.flip_stats) as f:
             metrics["training_data_flip_stats"] = json.load(f)
@@ -177,13 +246,21 @@ def main():
                   f, ensure_ascii=False, indent=2)
 
     print("=" * 50)
-    print("Evaluation Results")
+    print("Evaluation Results  [Table 1]")
     print("=" * 50)
-    for k, v in metrics.items():
-        if isinstance(v, float):
-            print(f"  {k:30s}: {v:.4f}")
-        elif isinstance(v, int):
-            print(f"  {k:30s}: {v}")
+    table_cols = [
+        ("Final Acc.     ", "final_answer_accuracy"),
+        ("Step Acc.      ", "step_accuracy"),
+        ("Persona Cons.  ", "persona_consistency"),
+        ("Belief-Flip    ", "belief_flip_win_rate"),
+    ]
+    for label, key in table_cols:
+        v = metrics.get(key)
+        print(f"  {label}: {f'{v:.4f}' if isinstance(v, float) else v}")
+    print("-" * 50)
+    print(f"  step_math_err_rate   : {metrics.get('step_math_err_rate', 0):.4f}")
+    print(f"  n_steps_judged       : {metrics.get('n_steps_judged', 0)}")
+    print(f"  n_flip_pairs         : {metrics.get('n_flip_pairs', 0)}")
     print(f"→ Full results in {args.output}")
 
 
