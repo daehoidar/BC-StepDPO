@@ -105,29 +105,73 @@ Curriculum standards reached by this persona:
 FORBIDDEN terms (introduced AFTER this persona's grade):
 {forbidden_with_codes}
 
-Decide whether the step is "persona_ok" or "reject_persona". A step is
-"reject_persona" iff it uses vocabulary/concepts forbidden by the persona's
-grade per the curriculum evidence above.
+Your single judgment is 화법 적합성 — whether the WAY this step is expressed fits
+THIS learner's level. "화법" (level-appropriate expression) has TWO facets, and a
+mismatch in EITHER makes the step "reject_persona" (the invention's "수준 부적합
+step"); otherwise "persona_ok":
+  (i) VOCABULARY/CONCEPT level — using a concept/term introduced AFTER this
+      persona's grade is itself inappropriate expression for this learner.
+  (ii) REPRESENTATION MODE / manner — concrete-vs-abstract, analogy-vs-bare-symbol,
+      and register/tone must fit the developmental stage.
+These are two facets of ONE thing (level-appropriate expression), not separate
+tests. Math/calculation errors are NOT judged here (a separate math judge handles
+논리·계산 정합성). Name the facet you used in "reasoning".
 
-Judging guidelines (apply using THIS persona's forbidden list above):
-- A forbidden concept counts EVEN IF the exact word is absent. e.g. writing
-  "let x be the number ... so 3x = 24" introduces a variable/equation, so it is a
-  VIOLATION for a persona that forbids variable/equation — even though only the
-  symbol "x" appears, not the word "variable".
+Facet (i) — vocabulary/concept level: judge by THIS persona's GRADE per the Korean
+curriculum, using the standards reached and the forbidden list above as evidence.
+The forbidden list is ILLUSTRATIVE, not exhaustive: a concept can be a violation if
+introduced AFTER this persona's grade even when not literally listed. Do NOT invent
+your own vague notion of "too advanced" — anchor to the grade at which the concept
+enters the curriculum.
+
+Key grade anchors (Korean curriculum):
+- Variables / equations / "let x be ..." (문자와 식): introduced in MIDDLE school
+  (중1, ~grade 7). => FORBIDDEN for ELEMENTARY personas; GRADE-APPROPRIATE for
+  MIDDLE and HIGH-SCHOOL personas (do NOT reject algebra for middle/high personas).
+- Fraction operations needing common denominator / LCM: upper elementary.
+- College topics (group theory, ring, field, topology): forbidden for ALL school
+  personas including high-school.
+
+Facet (ii) — representation mode / manner (CRA: Concrete → Representational →
+Abstract), GRADE-DIRECTIONAL and clear-cut:
+- ELEMENTARY personas need concrete, contextual, intuitive 화법 (real-world
+  referents, analogies, plain wording). A non-trivial step shown as BARE symbolic
+  computation with NO concrete grounding or interpretation is 화법 부적합
+  => reject_persona. The SAME computation grounded in a concrete context is
+  persona_ok.
+- MIDDLE personas: symbolic/representational 화법 is acceptable; reject on manner
+  only for a clearly mismatched register (childish baby-talk, or a brand-new
+  concept stated with zero interpretation).
+- HIGH-SCHOOL personas: abstract/symbolic, formula-only 화법 is fully appropriate;
+  never reject for terse formula-only manner — judge facet (i) only.
+Never reject a grade-appropriate concept merely for using notation; reject on
+facet (ii) only when the expression MODE mismatches the developmental stage above.
+
+Other rules:
 - A MATH ERROR is NOT a persona violation. Judge persona only; ignore arithmetic
   mistakes and garbled wording (handled by a separate math judge).
 - Everyday comparative/arithmetic language is grade-appropriate, NOT a violation:
   "twice as many", "half of", "add", "subtract", "divide 24 by 6", "multiply by 7".
 
-Examples (verdict depends on whether the concept is in THIS persona's forbidden list):
+Examples (the SAME algebra step flips verdict by the persona's GRADE):
   Step: "Let x be the number of apples. Then 3x = 24, so x = 8."
-   -> {{"verdict":"reject_persona","trigger_term":"x","reasoning":"introduces an algebraic variable and equation"}}
+   - ELEMENTARY persona (algebra is post-grade):
+     -> {{"verdict":"reject_persona","trigger_term":"x","reasoning":"variables/equations are introduced in middle school, after this persona's grade"}}
+   - MIDDLE or HIGH-SCHOOL persona (algebra is at/before grade):
+     -> {{"verdict":"persona_ok","trigger_term":null,"reasoning":"algebra is grade-appropriate for a middle/high-school persona"}}
   Step: "Find the least common multiple of 4 and 6 before adding the fractions."
-   -> {{"verdict":"reject_persona","trigger_term":"least common multiple","reasoning":"uses a forbidden fraction concept"}}
+   -> {{"verdict":"reject_persona","trigger_term":"least common multiple","reasoning":"forbidden fraction concept for this persona's grade"}}  # only if post-grade
   Step: "Theresa has twice as many, so 12 / 2 = 6 chocolate bars."
    -> {{"verdict":"persona_ok","trigger_term":null,"reasoning":"plain division and 'twice as many' are grade-appropriate"}}
   Step: "Add the daily earnings: 25 + 18 + 16 = 40."
    -> {{"verdict":"persona_ok","trigger_term":null,"reasoning":"an arithmetic error is not a persona violation"}}
+  Facet (ii) 화법 — the SAME computation, judged by representation mode:
+  Step (ELEMENTARY persona): "Compute 144 / 12 + 8 * 3 = 12 + 24 = 36."
+   -> {{"verdict":"reject_persona","trigger_term":null,"reasoning":"화법 부적합: bare symbolic computation with no concrete grounding for an elementary learner"}}
+  Step (ELEMENTARY persona): "Share 144 stickers among 12 friends — each gets 12; then 8 boxes of 3 toys add 24, so 36 in all."
+   -> {{"verdict":"persona_ok","trigger_term":null,"reasoning":"same math grounded in a concrete context, fits an elementary learner"}}
+  Step (HIGH-SCHOOL persona): "Compute 144 / 12 + 8 * 3 = 12 + 24 = 36."
+   -> {{"verdict":"persona_ok","trigger_term":null,"reasoning":"terse symbolic 화법 is appropriate for a high-school learner"}}
 
 OUTPUT FORMAT (JSON only):
 {{
@@ -401,6 +445,7 @@ class PersonaVerifier:
                     {"role": "user", "content": user_prompt},
                 ],
                 temperature=0.0,
+                seed=42,                 # best-effort 결정성(재현)
                 max_tokens=300,
                 response_format={"type": "json_object"},
             )
