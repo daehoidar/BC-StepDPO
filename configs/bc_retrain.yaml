@@ -1,0 +1,42 @@
+# BC-StepDPO 재학습 config — 598 페어에서 학습 신호를 확보하기 위한 강화 설정.
+# default.yaml 대비: lr 5e-6→1e-4, epochs 2→8, grad_accum 16→4(업데이트 빈도↑),
+# warmup 100→20(원래는 optimizer 스텝(~37)보다 warmup이 커서 lr이 워밍업도 못 끝냈음).
+
+# -------- SFT (참고용, 재학습에선 미사용) --------
+sft:
+  use_lora: true
+  lora_r: 32
+  lora_alpha: 64
+  lora_targets: ["q_proj", "v_proj", "o_proj", "k_proj", "gate_proj", "up_proj", "down_proj"]
+  epochs: 6
+  batch_size: 2
+  grad_accum: 8
+  gradient_checkpointing: true
+  max_len: 1024
+  lr: 5.0e-5
+  warmup_steps: 50
+
+# -------- BC-StepDPO (Stage 4) — 강화 --------
+use_lora: true
+lora_r: 32
+lora_alpha: 64
+lora_targets: ["q_proj", "v_proj", "o_proj", "k_proj"]
+
+epochs: 3                  # 2 → 3 (ep1~2에 수렴하므로 과적합 회피용으로 3으로 축소)
+batch_size: 2
+grad_accum: 4              # 16 → 4 (유효배치 8, optimizer 업데이트 빈도↑)
+max_len: 1024
+lr: 1.0e-4                 # 5e-6 → 1e-4 (DPO 신호 확보)
+weight_decay: 0.01
+warmup_steps: 20           # 100 → 20 (실제 스텝 수에 맞춤)
+max_grad_norm: 1.0
+
+beta: 0.1
+
+# 재현성
+seed: 42
+
+# Ablation toggle (default와 동일: BC-StepDPO full)
+disable_step_mask: false
+disable_belief_token: false
+disable_type2: false

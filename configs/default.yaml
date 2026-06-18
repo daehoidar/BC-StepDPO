@@ -34,6 +34,9 @@ max_grad_norm: 1.0
 # BC-StepDPO 핵심 하이퍼파라미터
 beta: 0.1                  # KL 정규화 강도 (상수)
 
+# 재현성 (random/numpy/torch + DataLoader shuffle 고정)
+seed: 42
+
 # -------- Ablation toggle --------
 # 아래 toggle로 ablation grid 12개 run 모두 커버:
 #
