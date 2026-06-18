@@ -50,6 +50,9 @@ class BCStepDPOBatch:
         lose_input_ids:     (B, L)
         lose_attention_mask:(B, L)
         lose_step_mask:     (B, L)
+        cal_input_ids:      (B, Lc) — L_cal용 belief context
+        cal_attention_mask: (B, Lc)
+        cal_step_mask:      (B, Lc) — belief 토큰만 1
         persona_idx:        (B,)    — 모니터링용
         is_type2:           (B,)    — bool, True if belief_flip_pair (모니터링용)
     """
@@ -59,15 +62,13 @@ class BCStepDPOBatch:
     lose_input_ids: torch.Tensor
     lose_attention_mask: torch.Tensor
     lose_step_mask: torch.Tensor
+    cal_input_ids: torch.Tensor
+    cal_attention_mask: torch.Tensor
+    cal_step_mask: torch.Tensor
     persona_idx: torch.Tensor
     is_type2: torch.Tensor
 
     def to(self, device):
-        """모든 텐서 필드를 device로 이동한 새 배치 반환.
-
-        accelerate의 prepare()/send_to_device()는 커스텀 dataclass 내부 텐서를
-        자동 이동하지 못하므로, 학습 루프에서 batch.to(device)로 명시 이동한다.
-        """
         return BCStepDPOBatch(
             win_input_ids=self.win_input_ids.to(device),
             win_attention_mask=self.win_attention_mask.to(device),
@@ -75,6 +76,9 @@ class BCStepDPOBatch:
             lose_input_ids=self.lose_input_ids.to(device),
             lose_attention_mask=self.lose_attention_mask.to(device),
             lose_step_mask=self.lose_step_mask.to(device),
+            cal_input_ids=self.cal_input_ids.to(device),
+            cal_attention_mask=self.cal_attention_mask.to(device),
+            cal_step_mask=self.cal_step_mask.to(device),
             persona_idx=self.persona_idx.to(device),
             is_type2=self.is_type2.to(device),
         )
@@ -105,6 +109,7 @@ def bc_stepdpo_loss(
     ref_model: nn.Module,
     batch: BCStepDPOBatch,
     beta: float = 0.1,
+    lambda_cal: float = 0.1,
 ) -> dict[str, torch.Tensor]:
     """BC-StepDPO 손실 계산.
 
@@ -137,16 +142,25 @@ def bc_stepdpo_loss(
     # Delta = log-ratio difference
     delta = (win_lp_policy - win_lp_ref) - (lose_lp_policy - lose_lp_ref)
 
-    # L = -E[log sigma(beta * delta)]
+    # L_BC-StepDPO
     per_sample_loss = -F.logsigmoid(beta * delta)
-    loss = per_sample_loss.mean()
+    loss_dpo = per_sample_loss.mean()
 
-    # 모니터링용 분리 지표
+    # L_cal: -log π_θ(b|x) — belief calibration
+    cal_lp = step_logprob(
+        policy_model, batch.cal_input_ids, batch.cal_attention_mask, batch.cal_step_mask,
+    )
+    loss_cal = -cal_lp.mean()
+
+    loss = loss_dpo + lambda_cal * loss_cal
+
     t2_mask = batch.is_type2
     t1_mask = ~t2_mask
 
     return {
         "loss": loss,
+        "loss_dpo": loss_dpo,
+        "loss_cal": loss_cal,
         "accuracy": (delta > 0).float().mean(),
         "type1_loss": per_sample_loss[t1_mask].mean() if t1_mask.any() else torch.tensor(0.0, device=loss.device),
         "type2_loss": per_sample_loss[t2_mask].mean() if t2_mask.any() else torch.tensor(0.0, device=loss.device),

@@ -179,17 +179,30 @@ def metric_belief_flip(model_path: str, pairs_path: str, device: str = "cuda") -
 
     n_win = 0
     for p in flip_pairs:
-        persona_tag  = p.get("persona_tag", "")
-        prefix_steps = p.get("prefix_steps", [])
-        context = (
-            (f"{persona_tag}\n" if persona_tag else "")
-            + f"Problem: {p['problem']}\nSolution:\n"
-            + ("\n".join(prefix_steps) + "\n" if prefix_steps else "")
-        )
-        lp_win  = _step_logprob(model, tokenizer, context, p["step_win"],  device)
-        lp_lose = _step_logprob(model, tokenizer, context, p["step_lose"], device)
-        if lp_win > lp_lose:
-            n_win += 1
+        persona_tag      = p.get("persona_tag", "")
+        flip_persona_tag = p.get("flip_persona_tag")
+        prefix_steps     = p.get("prefix_steps", [])
+
+        def ctx(tag: str) -> str:
+            return (
+                (f"{tag}\n" if tag else "")
+                + f"Problem: {p['problem']}\nSolution:\n"
+                + ("\n".join(prefix_steps) + "\n" if prefix_steps else "")
+            )
+
+        # A 방향: A context에서 step_win > step_lose
+        correct_a = _step_logprob(model, tokenizer, ctx(persona_tag), p["step_win"], device) \
+                  > _step_logprob(model, tokenizer, ctx(persona_tag), p["step_lose"], device)
+
+        if flip_persona_tag:
+            # B 방향: B context에서 step_lose > step_win (flip)
+            correct_b = _step_logprob(model, tokenizer, ctx(flip_persona_tag), p["step_lose"], device) \
+                      > _step_logprob(model, tokenizer, ctx(flip_persona_tag), p["step_win"], device)
+            if correct_a and correct_b:
+                n_win += 1
+        else:
+            if correct_a:
+                n_win += 1
 
     return {
         "belief_flip_win_rate": n_win / len(flip_pairs),

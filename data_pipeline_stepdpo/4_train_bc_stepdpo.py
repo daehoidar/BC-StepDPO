@@ -94,12 +94,25 @@ def tokenize_pair(
     }
 
 
+def tokenize_belief(tokenizer, problem: str, persona_tag: str, max_len: int) -> dict:
+    """L_cal용: problem context → belief(persona) 토큰 예측."""
+    ctx_ids    = tokenizer(f"Problem: {problem}\nPersona:", add_special_tokens=False)["input_ids"]
+    belief_ids = tokenizer(f" {persona_tag}",              add_special_tokens=False)["input_ids"]
+    full_ids   = (ctx_ids + belief_ids)[:max_len]
+    belief_start = min(len(ctx_ids), len(full_ids))
+    return {
+        "input_ids":      full_ids,
+        "attention_mask": [1] * len(full_ids),
+        "step_mask":      [0] * belief_start + [1] * (len(full_ids) - belief_start),
+    }
+
+
 def collate(batch_rows: list[dict], tokenizer, cfg: dict) -> BCStepDPOBatch:
     max_len = cfg.get("max_len", 1024)
     use_belief = not cfg.get("disable_belief_token", False)
     use_step_mask = not cfg.get("disable_step_mask", False)
 
-    win_tok, lose_tok = [], []
+    win_tok, lose_tok, cal_tok = [], [], []
     persona_idx, is_type2 = [], []
 
     for row in batch_rows:
@@ -111,8 +124,10 @@ def collate(batch_rows: list[dict], tokenizer, cfg: dict) -> BCStepDPOBatch:
             tokenizer, row["persona_tag"], row["problem"],
             row["prefix_steps"], row["step_lose"], max_len, use_belief, use_step_mask,
         )
+        ct = tokenize_belief(tokenizer, row["problem"], row["persona_tag"], max_len)
         win_tok.append(wt)
         lose_tok.append(lt)
+        cal_tok.append(ct)
         persona_idx.append(PERSONA_TO_IDX[row["persona_id"]])
         is_type2.append(row["pair_type"] == "belief_flip_pair")
 
@@ -129,6 +144,9 @@ def collate(batch_rows: list[dict], tokenizer, cfg: dict) -> BCStepDPOBatch:
         lose_input_ids=pad([t["input_ids"] for t in lose_tok], pad_id),
         lose_attention_mask=pad([t["attention_mask"] for t in lose_tok], 0),
         lose_step_mask=pad([t["step_mask"] for t in lose_tok], 0),
+        cal_input_ids=pad([t["input_ids"] for t in cal_tok], pad_id),
+        cal_attention_mask=pad([t["attention_mask"] for t in cal_tok], 0),
+        cal_step_mask=pad([t["step_mask"] for t in cal_tok], 0),
         persona_idx=torch.tensor(persona_idx, dtype=torch.long),
         is_type2=torch.tensor(is_type2, dtype=torch.bool),
     )
@@ -201,14 +219,14 @@ def main():
         policy, ref, optimizer, loader, scheduler
     )
 
-    beta = cfg.get("beta", 0.1)
+    beta       = cfg.get("beta", 0.1)
+    lambda_cal = cfg.get("lambda_cal", 0.1)
     global_step = 0
     for epoch in range(cfg["epochs"]):
         for batch in loader:
-            # 커스텀 dataclass 배치는 prepare()가 자동 이동 못 하므로 명시 이동
             batch = batch.to(accelerator.device)
             with accelerator.accumulate(policy):
-                out = bc_stepdpo_loss(policy, ref, batch, beta=beta)
+                out = bc_stepdpo_loss(policy, ref, batch, beta=beta, lambda_cal=lambda_cal)
                 accelerator.backward(out["loss"])
                 if accelerator.sync_gradients:
                     accelerator.clip_grad_norm_(
@@ -223,6 +241,7 @@ def main():
                 print(
                     f"[ep{epoch} step{global_step}] "
                     f"loss={out['loss'].item():.4f} "
+                    f"(dpo={out['loss_dpo'].item():.4f} cal={out['loss_cal'].item():.4f}) "
                     f"acc={out['accuracy'].item():.3f} "
                     f"t1_acc={out['type1_accuracy'].item():.3f} "
                     f"t2_acc={out['type2_accuracy'].item():.3f} "

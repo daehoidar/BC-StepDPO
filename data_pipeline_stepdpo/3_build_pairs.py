@@ -216,23 +216,39 @@ def build_type2_pairs(
             if (check.get("flip")
                     and not check.get("persona_a_acceptable")
                     and check.get("persona_b_acceptable")):
-                type2_pairs.append({
+                ec = p.get("evidence_code") or check.get("curriculum_basis")
+                tt = p.get("trigger_term") or check.get("trigger_term")
+                vs = p.get("verifier_stage")
+                base = {
                     "problem_id": p["problem_id"],
                     "problem": p["problem"],
-                    "persona_id": p["persona_id"],
-                    "persona_tag": p["persona_tag"],
                     "prefix_steps": p["prefix_steps"],
-                    "step_win": p["step_win"],
-                    "step_lose": p["step_lose"],
                     "pair_type": "belief_flip_pair",
                     "pair_subtype": "persona_first_error",
                     "reject_type": "reject_persona",
-                    "evidence_code": (p.get("evidence_code")
-                                      or check.get("curriculum_basis")),
-                    "trigger_term": (p.get("trigger_term")
-                                     or check.get("trigger_term")),
-                    "verifier_stage": p.get("verifier_stage"),
+                    "evidence_code": ec,
+                    "trigger_term": tt,
+                    "verifier_stage": vs,
+                }
+                # A의 관점: step_win(A수용) > step_lose(A거부)
+                type2_pairs.append({
+                    **base,
+                    "persona_id": p["persona_id"],
+                    "persona_tag": p["persona_tag"],
+                    "step_win": p["step_win"],
+                    "step_lose": p["step_lose"],
                     "flip_persona_id": other_persona["id"],
+                    "flip_persona_tag": other_persona["tag"],
+                })
+                # B의 관점: step_lose(B수용) > step_win(B거부) — flip 반대 방향
+                type2_pairs.append({
+                    **base,
+                    "persona_id": other_persona["id"],
+                    "persona_tag": other_persona["tag"],
+                    "step_win": p["step_lose"],
+                    "step_lose": p["step_win"],
+                    "flip_persona_id": p["persona_id"],
+                    "flip_persona_tag": p["persona_tag"],
                 })
                 problem_count[p["problem_id"]] += 1
                 break
