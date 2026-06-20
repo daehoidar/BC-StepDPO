@@ -38,6 +38,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from openai import OpenAI  # noqa: E402
+from openai_client import make_openai_client  # noqa: E402
 
 try:
     from vllm import LLM, SamplingParams  # type: ignore
@@ -163,7 +164,7 @@ def shared_mode(args, llm, fout):
 # ──────────────────────────── Standalone 모드 ────────────────────────────
 
 def standalone_mode(args, llm, fout):
-    gpt_client = OpenAI()
+    gpt_client = make_openai_client()
     stage_b_client = None
     if not args.disable_stage_b:
         stage_b_client = OpenAI(base_url=args.verifier_base_url,

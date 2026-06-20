@@ -20,6 +20,7 @@ Stage 3 (Full-Step-DPO via GPT-4o judge, persona cascade 적용):
                               한 belief에선 acceptable, 다른 belief에선 unacceptable.
 """
 import argparse
+import concurrent.futures
 import json
 import sys
 import time
@@ -367,16 +368,19 @@ def shared_mode(args, gpt_client, persona_by_id, personas, fout_path):
         problem = {"problem_id": problem_id,
                    "problem": samples[0]["problem"],
                    "ground_truth": samples[0]["ground_truth"]}
+        # 그룹 내 각 sample의 math judge(step별 GPT 호출)를 병렬 실행 (순차 대비 ~8배).
+        valid = [s for s in samples
+                 if len(s.get("steps", [])) >= 2
+                 and len(s.get("step_persona_labels", [])) == len(s.get("steps", []))]
         judged = []
-        for s in samples:
-            steps = s.get("steps", [])
-            labels = s.get("step_persona_labels", [])
-            if len(steps) < 2 or len(labels) != len(steps):
-                continue
-            step_labels = label_steps_from_cache(
-                labels, steps, gpt_client, math_judge_model, problem,
-            )
-            judged.append({"steps": steps, "labels": step_labels})
+        if valid:
+            with concurrent.futures.ThreadPoolExecutor(max_workers=8) as ex:
+                futs = [ex.submit(label_steps_from_cache,
+                                  s["step_persona_labels"], s["steps"],
+                                  gpt_client, math_judge_model, problem)
+                        for s in valid]
+                for s, fut in zip(valid, futs):
+                    judged.append({"steps": s["steps"], "labels": fut.result()})
 
         t1 = build_type1_pairs(judged, problem, persona)
         all_type1.extend(t1)

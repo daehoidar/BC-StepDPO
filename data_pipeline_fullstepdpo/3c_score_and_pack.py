@@ -41,6 +41,7 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(REPO_ROOT))
 
 from openai import OpenAI  # noqa: E402
+from openai_client import make_openai_client  # noqa: E402
 from transformers import AutoTokenizer  # noqa: E402
 
 try:
@@ -160,7 +161,7 @@ def main():
     # cascade verifier (PRM 위 추가 안전망)
     verifier = None
     if not args.disable_verifier:
-        gpt_client = OpenAI()
+        gpt_client = make_openai_client()
         stage_b_client = None
         if not args.disable_stage_b:
             stage_b_client = OpenAI(base_url=args.verifier_base_url,

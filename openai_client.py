@@ -97,12 +97,14 @@ class FailoverOpenAI:
                 continue  # fut는 백그라운드에 남지만(누수 허용) 새로 시도
             except (openai.RateLimitError, openai.AuthenticationError) as e:
                 last_err = e
-                if _quota_exhausted(e) or isinstance(e, openai.AuthenticationError):
-                    if self._idx + 1 < len(self._clients):
-                        print(f"[openai-failover] 키 #{self._idx} 소진/실패 "
-                              f"({type(e).__name__}) → 키 #{self._idx + 1}로 전환")
-                        self._idx += 1
-                        continue
+                is_quota = _quota_exhausted(e) or isinstance(e, openai.AuthenticationError)
+                # 소진/인증 → 즉시 전환. 일반 429(rate-limit)도 1회 재시도 후에도 막히면 전환.
+                if (is_quota or attempt >= 1) and self._idx + 1 < len(self._clients):
+                    print(f"[openai-failover] 키 #{self._idx} {type(e).__name__} "
+                          f"{'(소진/인증)' if is_quota else '(rate-limit 지속)'} → 키 #{self._idx + 1}로 전환")
+                    self._idx += 1
+                    continue
+                if is_quota:           # fallback 없음 + 소진/인증 → 포기
                     raise
                 time.sleep(min(2 ** attempt, 10))  # 일시 rate-limit → 대기 후 재시도
                 continue
