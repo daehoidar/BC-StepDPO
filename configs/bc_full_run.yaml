@@ -30,7 +30,7 @@ max_grad_norm: 1.0
 
 beta: 0.1
 lambda_sft: 0.1            # win step NLL anchor (Final Acc 보존)
-lambda_cal: 0.1            # belief calibration
+lambda_cal: 0.01           # belief calibration — cal_lp가 belief토큰 합(~26)이라 0.1이면 DPO(0.69) 압도→Format 붕괴. 0.01로 낮춤
 
 # 제안 방법 = belief 토큰·Type-2 모두 사용
 disable_step_mask: false

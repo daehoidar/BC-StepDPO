@@ -158,10 +158,16 @@ def main():
     parser.add_argument("--pairs", required=True)
     parser.add_argument("--config", default="configs/default.yaml")
     parser.add_argument("--output", required=True)
+    parser.add_argument("--lambda-sft", type=float, default=None, help="config의 lambda_sft 덮어씀(sweep용)")
+    parser.add_argument("--lambda-cal", type=float, default=None, help="config의 lambda_cal 덮어씀(sweep용)")
     args = parser.parse_args()
 
     with open(args.config) as f:
         cfg = yaml.safe_load(f)
+    if args.lambda_sft is not None:
+        cfg["lambda_sft"] = args.lambda_sft
+    if args.lambda_cal is not None:
+        cfg["lambda_cal"] = args.lambda_cal
 
     accelerator = Accelerator(gradient_accumulation_steps=cfg["grad_accum"])
 

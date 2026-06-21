@@ -33,6 +33,8 @@ warmup_steps: 100
 max_grad_norm: 1.0
 
 beta: 0.1
+lambda_sft: 0.0               # 순수 Step-DPO: SFT anchor 끔
+lambda_cal: 0.0               # 순수 Step-DPO: belief calibration 끔 (우리 방법 구성요소 → 베이스라인서 제외)
 
 # -------- Step-DPO 모드 toggle --------
 disable_step_mask: false      # step-level masking 켬 (Step-DPO 핵심 트릭)

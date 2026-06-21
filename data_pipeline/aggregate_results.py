@@ -27,6 +27,14 @@ MODELS = [
     ("step_dpo",    "Step-DPO"),
     ("fullstepdpo", "Full-Step-DPO (PRM)"),
     ("bc_3term",    "BC-StepDPO (3-term: DPO+SFT+cal)"),
+    # persona-weak base 실험 (belief-conditioning 순효과 분리)
+    ("sft_blind",   "SFT (persona-weak base)"),
+    ("step_blind",  "Step-DPO (on weak base)"),
+    ("bc_blind",    "SLC-StepDPO (on weak base)"),
+    # generic 중립 base 실험 (Final 유지 + Persona 낮춤)
+    ("sft_generic",  "SFT (generic neutral base)"),
+    ("step_generic", "Step-DPO (on generic base)"),
+    ("bc_generic",   "SLC-StepDPO (on generic base)"),
 ]
 COLS = ["Model", "Final Acc.", "Step Acc.", "Persona Cons.", "Format", "Belief-Flip"]
 N_METRIC = 5
@@ -94,7 +102,7 @@ def render(rows, out: Path):
 
     for i, (vals, (_, label)) in enumerate(zip(rows, MODELS)):
         y = ys[i]
-        bold_row = (i == 4)
+        bold_row = (MODELS[i][0] in ("bc_3term", "bc_blind", "bc_generic"))
         ax.text(XM, y, label, fontsize=11.5, fontweight="bold" if bold_row else "normal",
                 ha="left", va="center")
         for c, (v, x) in enumerate(zip(vals, XCOLS)):
@@ -121,7 +129,15 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--eval-dir", default="eval")
     ap.add_argument("--output", default="docs/figures_final/fig_results_table_real")
+    ap.add_argument("--models", default=None,
+                    help="쉼표구분 json-name; 주어지면 해당 모델만 (예: full-step 제외)")
     args = ap.parse_args()
+    global MODELS, PROPOSED
+    if args.models:
+        wanted = [m.strip() for m in args.models.split(",")]
+        MODELS = [(n, l) for (n, l) in MODELS if n in wanted]
+    PROPOSED = {i for i, (n, _) in enumerate(MODELS)
+                if n in ("bc_3term", "fullstepdpo", "bc_blind", "bc_generic")}
     ed = Path(args.eval_dir)
     rows = [load(ed, name) for name, _ in MODELS]
     print("=== aggregated ===")
